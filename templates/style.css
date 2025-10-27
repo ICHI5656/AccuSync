@@ -1,0 +1,56 @@
+
+/* AccuSync Soft Templates (logo-free) */
+@page { size: A4; margin: 18mm; }
+:root{
+  --accent:#6bb89c;   /* soft green */
+  --ink:#203036;
+  --muted:#5b6b72;
+  --bg:#ffffff;
+  --line:#e7efea;
+}
+*{box-sizing:border-box}
+html,body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji",sans-serif; color:var(--ink); background:var(--bg);}
+h1,h2,h3{margin:0}
+.page{
+  max-width: 210mm; margin: 0 auto; background:#fff;
+}
+.header{
+  display:flex; gap:18px; align-items:flex-start; margin-bottom:18px;
+}
+.badge{
+  padding:10px 14px; border-radius:16px; background:color-mix(in srgb, var(--accent) 18%, white); color:var(--ink); font-weight:700; letter-spacing:.08em; box-shadow:0 1px 0 rgba(0,0,0,.03) inset;
+}
+.meta{
+  margin-left:auto; text-align:right; font-size:12px; color:var(--muted);
+}
+.card{
+  border:1px solid var(--line); border-radius:16px; padding:14px; margin:10px 0; box-shadow:0 2px 14px rgba(0,0,0,.04);
+}
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+.kv{display:grid; grid-template-columns:140px 1fr; gap:6px 10px; font-size:12px}
+.kv div.label{color:var(--muted)}
+.tofrom{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.block-title{font-weight:700; color:var(--muted); font-size:12px; letter-spacing:.08em; margin-bottom:6px}
+.big-amount{
+  text-align:right; font-size:28px; font-weight:800; color:var(--ink);
+}
+hr.sep{border:0; border-top:1px dashed var(--line); margin:8px 0 12px}
+table.items{width:100%; border-collapse:separate; border-spacing:0; font-size:12px;}
+table.items thead th{
+  text-align:left; font-weight:700; padding:10px; background:color-mix(in srgb, var(--accent) 14%, white);
+  border-top-left-radius:10px; border-top-right-radius:10px; color:var(--ink);
+}
+table.items thead th+th{border-top-left-radius:0}
+table.items th, table.items td{border-bottom:1px solid var(--line); padding:10px}
+table.items td.num{text-align:right; white-space:nowrap}
+tfoot td{border:none; padding:4px 10px; font-size:12px}
+tfoot tr.total td{font-size:16px; font-weight:800; color:var(--ink)}
+.note{font-size:11px; color:var(--muted)}
+.stamp{
+  border:2px solid var(--accent); color:var(--accent); display:inline-block; padding:6px 10px; border-radius:12px; font-weight:800; letter-spacing:.2em;
+}
+.footer{margin-top:10px; font-size:11px; color:var(--muted)}
+/* Print tweaks */
+@media print{
+  .page{box-shadow:none}
+}

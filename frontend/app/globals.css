@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: #6bb89c;
+  --ink: #203036;
+  --muted: #5b6b72;
+  --bg: #ffffff;
+  --line: #e7efea;
+}
+
+body {
+  color: var(--ink);
+  background: var(--bg);
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

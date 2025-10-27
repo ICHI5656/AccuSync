@@ -1,0 +1,214 @@
+# AccuSync AI Configuration
+# このファイルでAI機能を柔軟に調整できます
+
+# AI Provider Settings
+providers:
+  # OpenAI GPT-4o (推奨)
+  openai:
+    enabled: true
+    model: "gpt-4o"
+    api_version: "2024-02-01"
+    max_tokens: 4000
+    temperature: 0.1
+    use_structured_outputs: true  # Structured Outputsを使用
+
+  # Anthropic Claude
+  claude:
+    enabled: false
+    model: "claude-3-5-sonnet-20241022"
+    max_tokens: 4000
+    temperature: 0.1
+
+  # Google Document AI
+  google_document_ai:
+    enabled: false
+    processor_id: ""
+    location: "us"
+
+# Default provider (openai, claude, google_document_ai, multi)
+default_provider: openai
+
+# AI Feature Modules (個別にON/OFF可能)
+features:
+  # ファイル形式の自動判別
+  file_format_detection:
+    enabled: true
+    confidence_threshold: 0.8
+    supported_formats:
+      - csv
+      - excel  # .xlsx, .xls
+      - pdf
+      - txt
+      - image  # .jpg, .png
+    fallback_to_extension: true  # AI失敗時は拡張子で判定
+
+  # 非構造化データからの情報抽出
+  data_extraction:
+    enabled: true
+    provider: openai  # openai, claude, google_document_ai
+    confidence_threshold: 0.85
+    retry_on_low_confidence: true
+    max_retries: 2
+
+    # 抽出対象フィールド定義
+    extract_fields:
+      - order_no       # 注文番号
+      - order_date     # 注文日
+      - customer_name  # 顧客名
+      - customer_code  # 顧客コード（任意）
+      - sku            # 商品コード
+      - product_name   # 商品名
+      - qty            # 数量
+      - unit_price     # 単価（任意）
+      - shipping_address  # 配送先住所（任意）
+      - memo           # 備考（任意）
+
+  # データマッピングの自動化
+  auto_mapping:
+    enabled: true
+    provider: openai
+    confidence_threshold: 0.9
+    learn_from_corrections: true  # ユーザー修正から学習
+    save_mapping_templates: true  # マッピングテンプレートを保存
+
+  # データ品質チェックと補完
+  data_quality_check:
+    enabled: true
+    provider: openai
+
+    checks:
+      # 必須フィールドチェック
+      required_fields_check: true
+
+      # データ型検証
+      type_validation: true
+
+      # 日付フォーマット統一
+      date_normalization:
+        enabled: true
+        target_format: "YYYY-MM-DD"
+
+      # 数値フォーマット統一
+      number_normalization:
+        enabled: true
+        decimal_separator: "."
+        thousand_separator: ","
+
+      # 重複検出
+      duplicate_detection:
+        enabled: true
+        check_fields: ["order_no", "customer_code"]
+
+      # 異常値検出
+      anomaly_detection:
+        enabled: true
+        price_range_check: true
+        qty_range_check: true
+
+    # データ補完
+    data_補完:
+      enabled: true
+      # 顧客名から顧客コードを推測
+      infer_customer_code: true
+      # 商品名からSKUを推測
+      infer_sku: true
+      # 標準単価から単価を補完
+      fill_missing_prices: true
+
+# Performance Settings
+performance:
+  # 並列処理
+  parallel_processing:
+    enabled: true
+    max_workers: 5
+
+  # バッチ処理
+  batch_processing:
+    enabled: true
+    batch_size: 100
+
+  # キャッシング
+  caching:
+    enabled: true
+    ttl_seconds: 3600  # 1時間
+    cache_extractions: true
+    cache_mappings: true
+
+  # タイムアウト
+  timeout:
+    file_detection: 10
+    data_extraction: 60
+    auto_mapping: 30
+    quality_check: 45
+
+# Cost Control
+cost_control:
+  # 月次予算（USD）
+  monthly_budget: 100.0
+
+  # 使用量アラート
+  usage_alerts:
+    enabled: true
+    thresholds:
+      - percentage: 50
+        notify: true
+      - percentage: 80
+        notify: true
+      - percentage: 100
+        block_requests: true
+
+  # 使用量ログ
+  usage_logging:
+    enabled: true
+    log_level: info  # debug, info, warning, error
+
+# Error Handling
+error_handling:
+  # AI失敗時のフォールバック
+  fallback_strategy: manual  # manual, skip, default_values
+
+  # リトライ設定
+  retry:
+    enabled: true
+    max_attempts: 3
+    backoff_factor: 2.0  # 指数バックオフ
+
+  # エラーログ
+  error_logging:
+    enabled: true
+    save_failed_requests: true
+    save_raw_responses: true
+
+# Prompt Templates (カスタマイズ可能)
+prompts:
+  data_extraction:
+    system: |
+      あなたは注文データ抽出の専門家です。
+      与えられた文書から以下の情報を正確に抽出してください。
+
+    user: |
+      以下の文書から注文情報を抽出してください：
+
+      {document_content}
+
+      抽出する情報：
+      - 注文番号
+      - 注文日
+      - 顧客名・顧客コード
+      - 商品コード・商品名
+      - 数量
+      - 単価（記載があれば）
+      - 配送先住所
+      - 備考
+
+  auto_mapping:
+    system: |
+      あなたはデータマッピングの専門家です。
+      CSVやExcelの列名を適切なフィールドにマッピングしてください。
+
+    user: |
+      以下の列名を適切なフィールドにマッピングしてください：
+
+      列名: {column_names}
+
+      対象フィールド: {target_fields}

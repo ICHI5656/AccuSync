@@ -1,0 +1,146 @@
+
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>御請求書 — あきゅシンク</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* AccuSync Soft Templates (logo-free) */
+@page { size: A4; margin: 18mm; }
+:root{
+  --accent:#6bb89c;   /* soft green */
+  --ink:#203036;
+  --muted:#5b6b72;
+  --bg:#ffffff;
+  --line:#e7efea;
+}
+*{box-sizing:border-box}
+html,body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji",sans-serif; color:var(--ink); background:var(--bg);}
+h1,h2,h3{margin:0}
+.page{
+  max-width: 210mm; margin: 0 auto; background:#fff;
+}
+.header{
+  display:flex; gap:18px; align-items:flex-start; margin-bottom:18px;
+}
+.badge{
+  padding:10px 14px; border-radius:16px; background:color-mix(in srgb, var(--accent) 18%, white); color:var(--ink); font-weight:700; letter-spacing:.08em; box-shadow:0 1px 0 rgba(0,0,0,.03) inset;
+}
+.meta{
+  margin-left:auto; text-align:right; font-size:12px; color:var(--muted);
+}
+.card{
+  border:1px solid var(--line); border-radius:16px; padding:14px; margin:10px 0; box-shadow:0 2px 14px rgba(0,0,0,.04);
+}
+.grid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+.kv{display:grid; grid-template-columns:140px 1fr; gap:6px 10px; font-size:12px}
+.kv div.label{color:var(--muted)}
+.tofrom{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.block-title{font-weight:700; color:var(--muted); font-size:12px; letter-spacing:.08em; margin-bottom:6px}
+.big-amount{
+  text-align:right; font-size:28px; font-weight:800; color:var(--ink);
+}
+hr.sep{border:0; border-top:1px dashed var(--line); margin:8px 0 12px}
+table.items{width:100%; border-collapse:separate; border-spacing:0; font-size:12px;}
+table.items thead th{
+  text-align:left; font-weight:700; padding:10px; background:color-mix(in srgb, var(--accent) 14%, white);
+  border-top-left-radius:10px; border-top-right-radius:10px; color:var(--ink);
+}
+table.items thead th+th{border-top-left-radius:0}
+table.items th, table.items td{border-bottom:1px solid var(--line); padding:10px}
+table.items td.num{text-align:right; white-space:nowrap}
+tfoot td{border:none; padding:4px 10px; font-size:12px}
+tfoot tr.total td{font-size:16px; font-weight:800; color:var(--ink)}
+.note{font-size:11px; color:var(--muted)}
+.stamp{
+  border:2px solid var(--accent); color:var(--accent); display:inline-block; padding:6px 10px; border-radius:12px; font-weight:800; letter-spacing:.2em;
+}
+.footer{margin-top:10px; font-size:11px; color:var(--muted)}
+/* Print tweaks */
+@media print{
+  .page{box-shadow:none}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="badge">御請求書</div>
+    <div class="meta">
+      <div>発行日: {issue_date}</div>
+      <div>請求番号: {invoice_no}</div>
+      <div>支払期限: {due_date}</div>
+    </div>
+  </div>
+
+  <div class="tofrom">
+    <div class="card">
+      <div class="block-title">請 求 先</div>
+      <div style="font-size:16px; font-weight:800">{customer.name} <span style="font-weight:600; color:var(--muted)">御中</span></div>
+      <div class="kv" style="margin-top:6px">
+        <div class="label">ご担当</div><div>{customer.person}</div>
+        <div class="label">住所</div><div>{customer.address}</div>
+        <div class="label">メール</div><div>{customer.email}</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="block-title">発 行 元</div>
+      <div style="font-size:16px; font-weight:800">{issuer.name}</div>
+      <div class="kv" style="margin-top:6px">
+        <div class="label">登録番号</div><div>{issuer.tax_id}</div>
+        <div class="label">住所</div><div>{issuer.address}</div>
+        <div class="label">TEL</div><div>{issuer.tel}</div>
+        <div class="label">メール</div><div>{issuer.email}</div>
+        <div class="label">振込先</div><div>{issuer.bank_info}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div>
+        <div class="block-title">請求期間</div>
+        <div>{period_start} 〜 {period_end}</div>
+      </div>
+      <div class="big-amount">合計金額：¥{total_in_tax}</div>
+    </div>
+    <hr class="sep">
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="width:36%">品目 / 説明</th>
+          <th>数量</th>
+          <th>単価</th>
+          <th>小計（税抜）</th>
+          <th>税率</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each items}
+        <tr>
+          <td>{description}</td>
+          <td class="num">{qty}{unit}</td>
+          <td class="num">¥{unit_price}</td>
+          <td class="num">¥{subtotal_ex_tax}</td>
+          <td class="num">{tax_rate}%</td>
+        </tr>
+        {/each}
+      </tbody>
+      <tfoot>
+        <tr><td colspan="3"></td><td class="num">小計（税抜）</td><td class="num">¥{subtotal_ex_tax}</td></tr>
+        <tr><td colspan="3"></td><td class="num">消費税</td><td class="num">¥{tax_amount}</td></tr>
+        <tr class="total"><td colspan="3"></td><td class="num">合計（税込）</td><td class="num">¥{total_in_tax}</td></tr>
+      </tfoot>
+    </table>
+    <div class="note" style="margin-top:8px">
+      お支払条件：{payment_terms} ／ 摘要：{notes}
+    </div>
+  </div>
+
+  <div class="footer">
+    ※ 本書は「あきゅシンク」により自動作成されています。必要に応じて押印欄：<span class="stamp">受領</span>
+  </div>
+</div>
+</body>
+</html>
