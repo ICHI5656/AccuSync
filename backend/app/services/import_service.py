@@ -8,10 +8,12 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import asyncio
+import re
 
 from app.models.order import Order, OrderItem
 from app.models.customer_company import CustomerCompany
 from app.models.product import Product
+from app.models.pricing_rule import PricingRule
 from app.ai.factory import AIProviderFactory
 from app.services.issuer_service import IssuerService
 
@@ -203,6 +205,10 @@ class ImportService:
                 product_name = ImportService._get_field_value(
                     row, 'product_name', ['商品名', '品名', '製品名', '機種', 'アイテム名']
                 )
+
+                # Extract extracted_memo (AI抽出キーワード)
+                extracted_memo = row.get('extracted_memo', '')
+
                 if not product_name:
                     warnings.append(f'Row {row_index}: 商品名が見つかりません')
                     skipped_count += 1
@@ -229,7 +235,14 @@ class ImportService:
                         Product.sku == product_sku_value
                     ).first()
 
-                # If not found by SKU, search by name
+                # If not found by SKU and extracted_memo is available, search by keyword
+                if not product and extracted_memo:
+                    # extracted_memoに含まれるキーワードで商品を検索
+                    product = db.query(Product).filter(
+                        Product.name.contains(extracted_memo)
+                    ).first()
+
+                # If not found, search by product name
                 if not product:
                     product = db.query(Product).filter(
                         Product.name == product_name
@@ -237,26 +250,51 @@ class ImportService:
 
                 if not product:
                     # 商品が見つからない場合はスキップ
-                    warnings.append(f'Row {row_index}: 商品 "{product_name}" が商品マスタに登録されていません - スキップしました')
+                    search_key = extracted_memo or product_name
+                    warnings.append(f'Row {row_index}: 商品 "{search_key}" が商品マスタに登録されていません - スキップしました')
                     skipped_count += 1
                     continue
 
                 # Create order
                 order_no = f"ORD{datetime.now().strftime('%Y%m%d%H%M%S')}{row_index}"
                 memo_value = ImportService._get_field_value(row, 'notes', ['備考', 'メモ', '注記', 'コメント'])
+
+                # Extract keywords from product name and add to memo
+                product_keywords = ImportService._extract_product_keywords(product_name)
+                if product_keywords:
+                    if memo_value:
+                        final_memo = f"{product_keywords} | {memo_value}"
+                    else:
+                        final_memo = product_keywords
+                else:
+                    final_memo = memo_value or ''
+
                 order = Order(
                     customer_id=customer.id,
                     issuer_company_id=default_issuer.id,  # デフォルト請求者を設定
                     source='csv',
                     order_no=order_no,
                     order_date=datetime.now().date(),
-                    memo=memo_value or ''
+                    memo=final_memo
                 )
                 db.add(order)
                 db.flush()
 
+                # Get customer-specific price
+                # 優先順位: 1. 価格ルール（顧客別） > 2. 商品マスタの単価 > 3. CSVの単価
+                default_price_to_use = product.default_price if product.default_price > 0 else unit_price
+
+                final_unit_price = ImportService._get_customer_price(
+                    db=db,
+                    customer_id=customer.id,
+                    product_id=product.id,
+                    quantity=quantity,
+                    default_price=default_price_to_use,
+                    product_type_keyword=extracted_memo  # extracted_memoを商品タイプキーワードとして渡す
+                )
+
                 # Create order item
-                subtotal = Decimal(quantity) * unit_price
+                subtotal = Decimal(quantity) * final_unit_price
                 tax_rate_decimal = Decimal(str(product.tax_rate))
                 tax_amount = subtotal * tax_rate_decimal
                 total = subtotal + tax_amount
@@ -265,7 +303,7 @@ class ImportService:
                     order_id=order.id,
                     product_id=product.id,
                     qty=quantity,
-                    unit_price=unit_price,
+                    unit_price=final_unit_price,
                     subtotal_ex_tax=subtotal,
                     tax_rate=tax_rate_decimal,
                     tax_amount=tax_amount,
@@ -320,3 +358,132 @@ class ImportService:
             except ValueError:
                 return 0.0
         return 0.0
+
+    @staticmethod
+    def _get_customer_price(
+        db: Session,
+        customer_id: int,
+        product_id: int,
+        quantity: int,
+        default_price: Decimal,
+        product_type_keyword: str = None
+    ) -> Decimal:
+        """
+        顧客別価格を取得する
+
+        Args:
+            db: データベースセッション
+            customer_id: 顧客ID
+            product_id: 商品ID
+            quantity: 数量
+            default_price: デフォルト価格（価格ルールがない場合）
+            product_type_keyword: 商品タイプキーワード（extracted_memo）
+
+        Returns:
+            適用する単価
+        """
+        today = datetime.now().date()
+
+        # 1. 商品タイプキーワードで価格ルールを検索（優先）
+        if product_type_keyword:
+            query = db.query(PricingRule).filter(
+                PricingRule.customer_id == customer_id,
+                PricingRule.product_type_keyword == product_type_keyword
+            )
+
+            # 有効期間のフィルター
+            query = query.filter(
+                (PricingRule.start_date.is_(None)) | (PricingRule.start_date <= today)
+            )
+            query = query.filter(
+                (PricingRule.end_date.is_(None)) | (PricingRule.end_date >= today)
+            )
+
+            # 最小数量のフィルター
+            query = query.filter(
+                (PricingRule.min_qty.is_(None)) | (PricingRule.min_qty <= quantity)
+            )
+
+            # 優先度順でソート
+            query = query.order_by(PricingRule.priority.desc())
+
+            # 最も優先度の高いルールを取得
+            pricing_rule = query.first()
+
+            if pricing_rule:
+                return pricing_rule.price
+
+        # 2. 個別商品IDで価格ルールを検索（フォールバック）
+        query = db.query(PricingRule).filter(
+            PricingRule.customer_id == customer_id,
+            PricingRule.product_id == product_id
+        )
+
+        # 有効期間のフィルター
+        query = query.filter(
+            (PricingRule.start_date.is_(None)) | (PricingRule.start_date <= today)
+        )
+        query = query.filter(
+            (PricingRule.end_date.is_(None)) | (PricingRule.end_date >= today)
+        )
+
+        # 最小数量のフィルター
+        query = query.filter(
+            (PricingRule.min_qty.is_(None)) | (PricingRule.min_qty <= quantity)
+        )
+
+        # 優先度順でソート
+        query = query.order_by(PricingRule.priority.desc())
+
+        # 最も優先度の高いルールを取得
+        pricing_rule = query.first()
+
+        if pricing_rule:
+            return pricing_rule.price
+        else:
+            return default_price
+
+    @staticmethod
+    def _extract_product_keywords(product_name: str) -> str:
+        """
+        商品名から商品タイプとバリエーションのみを抽出（デザイン名は除外）
+
+        Args:
+            product_name: 商品名
+            例: "ハードケース(ボタニカル 青黄花柄：ホワイト)h077@04/F-53E_大(974)"
+            → "ハードケース"
+            例: "手帳型カバーmirror(刺繍風プリント：グリーン)095@04m/wish4(mirror)_3L(976)"
+            → "手帳型カバー / mirror"
+
+        Returns:
+            抽出されたキーワード文字列（商品タイプ + バリエーションのみ）
+        """
+        if not product_name:
+            return ''
+
+        keywords = []
+
+        # 製品タイプを抽出（優先順位順：長いものから先にチェック）
+        product_types = [
+            '手帳型カバー', 'ハードケース',
+            'iPadケース', 'iPhoneケース', 'スマホケース', 'タブレットケース',
+            'ソフトケース', 'バンパーケース', 'クリアケース', 'レザーケース',
+            'PCケース', '保護フィルム', 'ガラスフィルム',
+            'バンパー', 'リング', 'スタンド', 'ストラップ',
+            'グリップ', 'ホルダー', 'アダプター', 'ケーブル', '充電器'
+        ]
+        for ptype in product_types:
+            if ptype in product_name:
+                keywords.append(ptype)
+                break  # 最初に見つかったタイプのみ
+
+        # mirrorやcardなどのバリエーションを抽出
+        if 'mirror' in product_name.lower():
+            keywords.append('mirror')
+        if 'card' in product_name.lower():
+            keywords.append('card')
+
+        # デザイン名は除外して、商品タイプとバリエーションのみ返す
+        # これにより、同じ商品タイプ（例：ハードケース）は同じ単価になる
+
+        return ' / '.join(keywords) if keywords else ''

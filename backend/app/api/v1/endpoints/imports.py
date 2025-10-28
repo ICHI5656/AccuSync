@@ -17,6 +17,7 @@ from app.models.import_job import ImportJob
 from app.parsers.factory import FileParserFactory
 from app.ai.factory import AIProviderFactory
 from app.tasks.import_tasks import process_file_import
+from app.services.import_service import ImportService
 from app.schemas.import_job import (
     FileUploadRequest,
     FileUploadResponse,
@@ -144,9 +145,30 @@ async def preview_parse(
         # Limit data for preview
         preview_data = parse_result.data[:request.preview_rows]
 
+        # Extract keywords from product name for each row
+        for row in preview_data:
+            # Get product name from various possible keys
+            product_name = (
+                row.get('product_name') or
+                row.get('商品名') or
+                row.get('品名') or
+                row.get('製品名') or
+                ''
+            )
+            if product_name:
+                extracted_keywords = ImportService._extract_product_keywords(product_name)
+                row['extracted_memo'] = extracted_keywords
+            else:
+                row['extracted_memo'] = ''
+
+        # Add extracted_memo to columns if not present
+        columns_with_memo = parse_result.columns.copy()
+        if 'extracted_memo' not in columns_with_memo:
+            columns_with_memo.append('extracted_memo')
+
         return ParsePreviewResponse(
             success=True,
-            columns=parse_result.columns,
+            columns=columns_with_memo,
             data=preview_data,
             row_count=len(preview_data),
             total_rows_estimate=parse_result.row_count,

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 
 interface Product {
   id: number
@@ -325,9 +326,20 @@ export default function ProductsPage() {
       <div className="p-8">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">商品管理</h1>
-            <p className="text-gray-600 mt-2">商品マスタの登録と顧客別価格設定を管理します</p>
+          <div className="mb-8 flex justify-between items-start">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">商品管理</h1>
+              <p className="text-gray-600 mt-2">商品マスタの登録と顧客別価格設定を管理します</p>
+            </div>
+            <Link
+              href="/pricing-matrix"
+              className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center space-x-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span>会社別卸単価設定</span>
+            </Link>
           </div>
 
           {/* Search and Filter */}

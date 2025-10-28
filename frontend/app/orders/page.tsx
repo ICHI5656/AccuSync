@@ -16,11 +16,11 @@ interface OrderItem {
   product_name: string
   product_sku: string
   qty: number
-  unit_price: number
-  subtotal_ex_tax: number
-  tax_rate: number
-  tax_amount: number
-  total_in_tax: number
+  unit_price: string
+  subtotal_ex_tax: string
+  tax_rate: string
+  tax_amount: string
+  total_in_tax: string
 }
 
 interface Order {
@@ -36,12 +36,12 @@ interface Order {
   source: string
   memo: string | null
   items: OrderItem[]
-  total_amount: number
+  total_amount: string
 }
 
 interface OrderSummary {
   total_orders: number
-  total_amount: number
+  total_amount: string
   customer_count: number
 }
 
@@ -86,7 +86,7 @@ export default function OrdersPage() {
       }
 
       const [ordersRes, summaryRes] = await Promise.all([
-        fetch(`http://localhost:8100/api/v1/orders?${params.toString()}`),
+        fetch(`http://localhost:8100/api/v1/orders/?${params.toString()}`),
         fetch(`http://localhost:8100/api/v1/orders/summary?${params.toString()}`)
       ])
 
@@ -203,7 +203,7 @@ export default function OrdersPage() {
                 <div className="flex justify-between text-sm">
                   <span className="text-muted">合計金額:</span>
                   <span className="font-semibold text-accent">
-                    ¥{summary.total_amount.toLocaleString()}
+                    ¥{parseFloat(summary.total_amount).toLocaleString()}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
@@ -245,7 +245,7 @@ export default function OrdersPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-2xl font-bold text-accent">
-                        ¥{order.total_amount.toLocaleString()}
+                        ¥{parseFloat(order.total_amount).toLocaleString()}
                       </p>
                       <p className="text-xs text-muted">税込</p>
                     </div>
@@ -289,11 +289,11 @@ export default function OrdersPage() {
                           <tr key={item.id}>
                             <td className="px-4 py-3 text-ink">{item.product_name}</td>
                             <td className="px-4 py-3 text-right text-ink">{item.qty}</td>
-                            <td className="px-4 py-3 text-right text-ink">¥{item.unit_price.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-right text-ink">¥{item.subtotal_ex_tax.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-right text-muted">{(item.tax_rate * 100).toFixed(0)}%</td>
-                            <td className="px-4 py-3 text-right text-muted">¥{item.tax_amount.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-accent">¥{item.total_in_tax.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right text-ink">¥{parseFloat(item.unit_price).toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right text-ink">¥{parseFloat(item.subtotal_ex_tax).toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right text-muted">{(parseFloat(item.tax_rate) * 100).toFixed(0)}%</td>
+                            <td className="px-4 py-3 text-right text-muted">¥{parseFloat(item.tax_amount).toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-accent">¥{parseFloat(item.total_in_tax).toLocaleString()}</td>
                           </tr>
                         ))}
                       </tbody>

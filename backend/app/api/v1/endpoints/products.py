@@ -57,9 +57,15 @@ class ProductResponse(BaseModel):
 
 
 class PricingRuleCreate(BaseModel):
-    """価格ルール作成リクエスト"""
+    """価格ルール作成リクエスト
+
+    product_idまたはproduct_type_keywordのどちらか一方を指定します：
+    - product_id: 個別商品に対する価格ルール
+    - product_type_keyword: 商品タイプ（extracted_memo）に対する価格ルール
+    """
     customer_id: int = Field(..., description="取引先ID")
-    product_id: int = Field(..., description="商品ID")
+    product_id: Optional[int] = Field(None, description="商品ID（個別商品指定の場合）")
+    product_type_keyword: Optional[str] = Field(None, max_length=200, description="商品タイプキーワード（例: ハードケース、手帳型カバー/mirror）")
     price: Decimal = Field(..., gt=0, description="適用単価")
     min_qty: Optional[int] = Field(None, gt=0, description="最小数量")
     start_date: Optional[str] = Field(None, description="適用開始日（YYYY-MM-DD）")
@@ -72,9 +78,10 @@ class PricingRuleResponse(BaseModel):
     id: int
     customer_id: int
     customer_name: str
-    product_id: int
-    product_sku: str
-    product_name: str
+    product_id: int | None
+    product_type_keyword: str | None
+    product_sku: str | None
+    product_name: str | None
     price: Decimal
     min_qty: int | None
     start_date: str | None
@@ -358,6 +365,61 @@ async def get_product_pricing_rules(
         )
 
 
+@router.get("/pricing", response_model=List[PricingRuleResponse])
+async def list_pricing_rules(
+    customer_id: Optional[int] = Query(None, description="取引先IDでフィルター"),
+    product_type_keyword: Optional[str] = Query(None, description="商品タイプキーワードでフィルター"),
+    db: Session = Depends(get_db)
+):
+    """
+    価格ルール一覧を取得
+    """
+    try:
+        query = db.query(PricingRule)
+
+        if customer_id:
+            query = query.filter(PricingRule.customer_id == customer_id)
+
+        if product_type_keyword:
+            query = query.filter(PricingRule.product_type_keyword == product_type_keyword)
+
+        rules = query.order_by(PricingRule.priority.desc()).all()
+
+        result = []
+        for rule in rules:
+            customer = db.query(CustomerCompany).filter(
+                CustomerCompany.id == rule.customer_id
+            ).first()
+
+            product = None
+            if rule.product_id:
+                product = db.query(Product).filter(
+                    Product.id == rule.product_id
+                ).first()
+
+            result.append(PricingRuleResponse(
+                id=rule.id,
+                customer_id=rule.customer_id,
+                customer_name=customer.name if customer else "Unknown",
+                product_id=rule.product_id,
+                product_type_keyword=rule.product_type_keyword,
+                product_sku=product.sku if product else None,
+                product_name=product.name if product else None,
+                price=rule.price,
+                min_qty=rule.min_qty,
+                start_date=rule.start_date.isoformat() if rule.start_date else None,
+                end_date=rule.end_date.isoformat() if rule.end_date else None,
+                priority=rule.priority
+            ))
+
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve pricing rules: {str(e)}"
+        )
+
+
 @router.post("/pricing", response_model=PricingRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_pricing_rule(
     request: PricingRuleCreate,
@@ -365,9 +427,24 @@ async def create_pricing_rule(
 ):
     """
     新しい価格ルールを作成
+
+    product_idまたはproduct_type_keywordのどちらか一方を指定します
     """
     try:
-        # 顧客と商品の存在確認
+        # product_idとproduct_type_keywordのどちらか一方が必須
+        if not request.product_id and not request.product_type_keyword:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="product_id または product_type_keyword のどちらか一方を指定してください"
+            )
+
+        if request.product_id and request.product_type_keyword:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="product_id と product_type_keyword の両方を指定することはできません"
+            )
+
+        # 顧客の存在確認
         customer = db.query(CustomerCompany).filter(
             CustomerCompany.id == request.customer_id
         ).first()
@@ -377,18 +454,22 @@ async def create_pricing_rule(
                 detail=f"Customer {request.customer_id} not found"
             )
 
-        product = db.query(Product).filter(
-            Product.id == request.product_id
-        ).first()
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product {request.product_id} not found"
-            )
+        # product_idが指定されている場合は商品の存在確認
+        product = None
+        if request.product_id:
+            product = db.query(Product).filter(
+                Product.id == request.product_id
+            ).first()
+            if not product:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Product {request.product_id} not found"
+                )
 
         rule = PricingRule(
             customer_id=request.customer_id,
             product_id=request.product_id,
+            product_type_keyword=request.product_type_keyword,
             price=request.price,
             min_qty=request.min_qty,
             start_date=request.start_date,
@@ -405,8 +486,9 @@ async def create_pricing_rule(
             customer_id=rule.customer_id,
             customer_name=customer.name,
             product_id=rule.product_id,
-            product_sku=product.sku,
-            product_name=product.name,
+            product_type_keyword=rule.product_type_keyword,
+            product_sku=product.sku if product else None,
+            product_name=product.name if product else None,
             price=rule.price,
             min_qty=rule.min_qty,
             start_date=rule.start_date.isoformat() if rule.start_date else None,

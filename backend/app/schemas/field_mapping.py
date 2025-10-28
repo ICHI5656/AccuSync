@@ -46,6 +46,13 @@ STANDARD_FIELDS: List[StandardField] = [
         data_type="number"
     ),
     StandardField(
+        key="order_date",
+        label="注文日",
+        description="注文日時",
+        required=False,
+        data_type="date"
+    ),
+    StandardField(
         key="address",
         label="住所",
         description="顧客住所",
@@ -86,7 +93,7 @@ STANDARD_FIELDS: List[StandardField] = [
 # よくある列名の自動マッピング候補
 COMMON_COLUMN_PATTERNS: Dict[str, List[str]] = {
     "customer_name": [
-        "顧客名", "お客様名", "取引先名", "受注先名", "会社名", "氏名",
+        "顧客名", "お客様名", "取引先名", "受注先名", "会社名", "氏名", "注文者氏名", "送付先氏名",
         "customer_name", "customer", "client_name", "client", "company_name", "name"
     ],
     "product_name": [
@@ -97,16 +104,20 @@ COMMON_COLUMN_PATTERNS: Dict[str, List[str]] = {
         "数量", "個数", "数", "qty", "quantity", "count", "amount", "number"
     ],
     "unit_price": [
-        "単価", "価格", "金額", "unit_price", "price", "cost", "amount"
+        "単価", "価格", "金額", "販売価格", "unit_price", "price", "cost", "amount"
+    ],
+    "order_date": [
+        "注文日", "受注日", "注文日時", "受注日時", "発注日", "日付",
+        "order_date", "order_datetime", "date", "ordered_at", "created_at"
     ],
     "address": [
-        "住所", "所在地", "address", "location"
+        "住所", "所在地", "注文者住所", "送付先住所", "address", "location"
     ],
     "postal_code": [
-        "郵便番号", "〒", "postal_code", "zip_code", "zip", "postal"
+        "郵便番号", "〒", "注文者郵便番号", "送付先郵便番号", "postal_code", "zip_code", "zip", "postal"
     ],
     "phone": [
-        "電話番号", "電話", "TEL", "tel", "phone", "phone_number", "contact"
+        "電話番号", "電話", "TEL", "tel", "注文者電話番号", "送付先電話番号", "phone", "phone_number", "contact"
     ],
     "email": [
         "メールアドレス", "メール", "Eメール", "email", "e-mail", "mail"

@@ -90,6 +90,8 @@ from app.api.v1.endpoints import settings as settings_router
 from app.api.v1.endpoints import orders
 from app.api.v1.endpoints import mapping
 from app.api.v1.endpoints import products
+from app.api.v1.endpoints import pricing_rules
+from app.api.v1.endpoints import customers
 
 app.include_router(
     imports.router,
@@ -119,6 +121,18 @@ app.include_router(
     products.router,
     prefix="/api/v1/products",
     tags=["products"]
+)
+
+app.include_router(
+    pricing_rules.router,
+    prefix="/api/v1/pricing-rules",
+    tags=["pricing-rules"]
+)
+
+app.include_router(
+    customers.router,
+    prefix="/api/v1/customers",
+    tags=["customers"]
 )
 
 # TODO: Add more routers when implemented

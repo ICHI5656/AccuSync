@@ -39,6 +39,7 @@ class MappingTemplateCreate(BaseModel):
     """マッピングテンプレート作成リクエスト"""
     template_name: str = Field(..., min_length=1, max_length=100, description="テンプレート名")
     description: Optional[str] = Field(None, max_length=500, description="説明")
+    customer_id: Optional[int] = Field(None, description="顧客ID（NULLの場合は汎用テンプレート）")
     file_pattern: Optional[str] = Field(None, max_length=200, description="ファイル名パターン")
     file_type: Optional[str] = Field(None, description="ファイルタイプ")
     column_mapping: dict = Field(..., description="列マッピング設定")
@@ -50,6 +51,7 @@ class MappingTemplateResponse(BaseModel):
     id: int
     template_name: str
     description: str | None
+    customer_id: int | None
     file_pattern: str | None
     file_type: str | None
     column_mapping: dict
@@ -101,16 +103,24 @@ async def get_mapping_fields():
 @router.get("/templates", response_model=List[MappingTemplateResponse])
 async def list_templates(
     db: Session = Depends(get_db),
-    is_active: Optional[bool] = None
+    is_active: Optional[bool] = None,
+    customer_id: Optional[int] = None
 ):
     """
     マッピングテンプレート一覧を取得
+    顧客IDを指定すると、その顧客専用のテンプレートと汎用テンプレートを返します
     """
     try:
         query = db.query(MappingTemplate)
 
         if is_active is not None:
             query = query.filter(MappingTemplate.is_active == is_active)
+
+        if customer_id is not None:
+            # 顧客専用テンプレート + 汎用テンプレート（customer_id = NULL）
+            query = query.filter(
+                (MappingTemplate.customer_id == customer_id) | (MappingTemplate.customer_id.is_(None))
+            )
 
         templates = query.order_by(
             MappingTemplate.is_default.desc(),
@@ -122,6 +132,7 @@ async def list_templates(
                 id=t.id,
                 template_name=t.template_name,
                 description=t.description,
+                customer_id=t.customer_id,
                 file_pattern=t.file_pattern,
                 file_type=t.file_type,
                 column_mapping=t.column_mapping,
@@ -188,27 +199,41 @@ async def create_template(
     新しいマッピングテンプレートを作成
     """
     try:
-        # テンプレート名の重複チェック
-        existing = db.query(MappingTemplate).filter(
+        # テンプレート名の重複チェック（同じ顧客内での重複）
+        existing_query = db.query(MappingTemplate).filter(
             MappingTemplate.template_name == request.template_name
-        ).first()
+        )
+
+        if request.customer_id is not None:
+            existing_query = existing_query.filter(MappingTemplate.customer_id == request.customer_id)
+        else:
+            existing_query = existing_query.filter(MappingTemplate.customer_id.is_(None))
+
+        existing = existing_query.first()
 
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Template '{request.template_name}' already exists"
+                detail=f"Template '{request.template_name}' already exists for this customer"
             )
 
-        # デフォルトテンプレートの場合、既存のデフォルトを解除
+        # デフォルトテンプレートの場合、既存のデフォルトを解除（顧客別）
         if request.is_default:
-            db.query(MappingTemplate).filter(
+            default_query = db.query(MappingTemplate).filter(
                 MappingTemplate.is_default == True
-            ).update({"is_default": False})
+            )
+            if request.customer_id is not None:
+                default_query = default_query.filter(MappingTemplate.customer_id == request.customer_id)
+            else:
+                default_query = default_query.filter(MappingTemplate.customer_id.is_(None))
+
+            default_query.update({"is_default": False})
 
         # 新しいテンプレート作成
         template = MappingTemplate(
             template_name=request.template_name,
             description=request.description,
+            customer_id=request.customer_id,
             file_pattern=request.file_pattern,
             file_type=request.file_type,
             column_mapping=request.column_mapping,

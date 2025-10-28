@@ -49,6 +49,26 @@ export default function Navbar() {
                 ジョブ一覧
               </Link>
               <Link
+                href="/customers"
+                className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  isActive('/customers')
+                    ? 'border-accent text-accent'
+                    : 'border-transparent text-muted hover:border-line hover:text-ink'
+                }`}
+              >
+                取引先管理
+              </Link>
+              <Link
+                href="/products"
+                className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  isActive('/products')
+                    ? 'border-accent text-accent'
+                    : 'border-transparent text-muted hover:border-line hover:text-ink'
+                }`}
+              >
+                商品管理
+              </Link>
+              <Link
                 href="/settings"
                 className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
                   isActive('/settings')

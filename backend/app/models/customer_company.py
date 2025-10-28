@@ -31,7 +31,10 @@ class CustomerCompany(BaseModel):
     contact_email = Column(String(255), nullable=True, comment="担当者メールアドレス")
 
     # 支払条件
-    payment_terms = Column(Integer, nullable=True, default=30, comment="支払期限（日数）")
+    payment_terms = Column(String(200), nullable=True, comment="支払条件（説明文）")
+    closing_day = Column(Integer, nullable=True, comment="締め日（1-31、0=月末）")
+    payment_day = Column(Integer, nullable=True, comment="支払い日（1-31、0=月末）")
+    payment_month_offset = Column(Integer, nullable=True, default=1, comment="支払い月のオフセット（0=当月、1=翌月、2=翌々月）")
     tax_mode = Column(String(20), nullable=True, default="inclusive", comment="税区分: inclusive, exclusive")
 
     # その他
@@ -41,6 +44,8 @@ class CustomerCompany(BaseModel):
     orders = relationship("Order", back_populates="customer")
     invoices = relationship("Invoice", back_populates="customer")
     pricing_rules = relationship("PricingRule", back_populates="customer")
+    mapping_templates = relationship("MappingTemplate", back_populates="customer")
+    identifiers = relationship("CustomerIdentifier", back_populates="customer", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<CustomerCompany(id={self.id}, code='{self.code}', name='{self.name}')>"
