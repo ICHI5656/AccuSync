@@ -381,7 +381,7 @@ docker-compose logs -f frontend
 
 **顧客別価格ルール** (`/api/v1/products/pricing`)
 ```python
-# 価格ルールの作成例
+# 価格ルールの作成例（product_id指定）
 rule = PricingRule(
     customer_id=1,
     product_id=10,
@@ -391,12 +391,37 @@ rule = PricingRule(
     end_date="2025-12-31",
     priority=0
 )
+
+# 価格ルールの作成例（product_type_keyword指定）
+rule = PricingRule(
+    customer_id=1,
+    product_type_keyword="ハードケース",  # 商品タイプキーワード
+    price=Decimal("600"),  # 顧客別特別価格
+    priority=0
+)
 ```
+
+**価格マトリクスページ** (`/pricing-matrix`)
+- グリッド形式で会社別×商品タイプ別の卸単価を一括管理
+- 商品タイプ（行）× 取引先（列）のマトリクス表示
+- 各セルで直接価格入力・保存・削除が可能
+- `product_type_keyword` を使用した価格ルール管理
+
+**インポート時の価格適用優先順位:**
+1. **価格マトリクスの設定値**（最優先）- `product_type_keyword` でマッチング
+2. 商品マスタの標準単価（`default_price` > 0の場合）
+3. CSVファイルの単価（フォールバック）
 
 **インポート時の商品照合:**
 1. SKUで検索（優先）
 2. 商品名で検索（フォールバック）
 3. 見つからない場合はスキップ（ワーニング表示）
+
+**商品タイプキーワード抽出:**
+- `_extract_product_keywords()` が商品名から商品タイプとバリエーションのみを抽出
+- デザイン名は除外され、同じ商品タイプは同じ価格になる
+- 例: "ハードケース(ボタニカル 青黄花柄)" → "ハードケース"
+- 例: "手帳型カバーmirror(刺繍風プリント)" → "手帳型カバー / mirror"
 
 ### 列マッピング機能
 
@@ -429,13 +454,22 @@ rule = PricingRule(
 
 ## 最近の主要な変更
 
+**2025-10-28: 価格マトリクスページ実装**
+- 会社別卸単価設定ページ作成（グリッド形式UI）
+- `product_type_keyword` による価格ルール管理
+- インポートエラー表示の改善（3段階表示：エラー/成功/警告）
+- プレビュー表示の簡略化（必須フィールドのみ表示）
+- 商品タイプキーワード抽出のリファイン（デザイン名除外）
+- ホームページに価格マトリクスへのリンク追加
+
 **2025-10-27: 商品・価格管理機能実装**
 - 商品マスタ管理API・UI作成
 - 顧客別価格ルール設定機能
 - インポート時の商品参照機能（事前登録必須）
 - 列マッピングテンプレート機能
 - AI設定画面の改善（環境変数からの読み取り）
-- プレビュー表示の改善（全列表示対応）
+- 顧客管理ページ作成（締め日・支払い日設定）
+- 顧客識別子システム追加（自動検出機能）
 
 **2025-10-24: AI顧客タイプ判定機能追加**
 - `CustomerCompany.is_individual` フィールド追加
@@ -448,6 +482,7 @@ rule = PricingRule(
 - Docker ボリューム共有設定追加
 - WeasyPrint 依存関係の一時無効化
 - 商品自動登録機能の削除（事前登録必須化）
+- order_date フィールドを標準フィールドに追加
 
 ## アクセスURL
 
@@ -466,6 +501,9 @@ rule = PricingRule(
 | データ取り込み | http://localhost:3100/imports | CSV/Excel/PDFインポート |
 | ジョブ一覧 | http://localhost:3100/jobs | インポートジョブ管理 |
 | 商品管理 | http://localhost:3100/products | 商品マスタ・価格設定 |
+| 価格マトリクス | http://localhost:3100/pricing-matrix | 会社別卸単価設定 |
+| 顧客管理 | http://localhost:3100/customers | 取引先情報・締め日・支払い日設定 |
+| 注文一覧 | http://localhost:3100/orders | 取り込んだ注文データ表示 |
 | システム設定 | http://localhost:3100/settings | AI設定・請求者情報・DB統計 |
 
 ## 残りの開発タスク
