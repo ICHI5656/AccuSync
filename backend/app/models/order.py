@@ -61,6 +61,11 @@ class OrderItem(BaseModel):
     tax_amount = Column(Numeric(15, 2), nullable=False, comment="消費税額")
     total_in_tax = Column(Numeric(15, 2), nullable=False, comment="税込合計")
 
+    # 商品分類情報（インポート時に設定）
+    product_type = Column(String(100), nullable=True, comment="商品タイプ（ハードケース/手帳型カバーなど）")
+    device_info = Column(String(100), nullable=True, comment="機種情報（iPhone 15 Pro/AQUOS wish4など）")
+    size_info = Column(String(50), nullable=True, comment="サイズ情報（L/i6/特大など）")
+
     # Relationships
     order = relationship("Order", back_populates="items")
     product = relationship("Product", back_populates="order_items")

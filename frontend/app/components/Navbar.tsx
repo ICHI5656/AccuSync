@@ -69,6 +69,28 @@ export default function Navbar() {
                 商品管理
               </Link>
               <Link
+                href="/invoices"
+                className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  isActive('/invoices')
+                    ? 'border-accent text-accent'
+                    : 'border-transparent text-muted hover:border-line hover:text-ink'
+                }`}
+              >
+                請求書
+              </Link>
+
+              <Link
+                href="/stats"
+                className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                  isActive('/stats')
+                    ? 'border-accent text-accent'
+                    : 'border-transparent text-muted hover:border-line hover:text-ink'
+                }`}
+              >
+                📊 注文統計
+              </Link>
+
+              <Link
                 href="/settings"
                 className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
                   isActive('/settings')

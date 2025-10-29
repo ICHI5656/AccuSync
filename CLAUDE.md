@@ -274,6 +274,46 @@ volumes:
 # app/services/__init__.py でコメントアウト済み
 ```
 
+**9. デバイス検出サービス（DeviceDetectionService）**
+```python
+# backend/app/services/device_detection_service.py
+# 商品名から機種情報、サイズ情報、商品タイプを自動抽出
+
+from app.services.device_detection_service import DeviceDetectionService
+
+service = DeviceDetectionService(db)
+
+# 機種検出（iPhone, Galaxy, AQUOS, Xperia, Pixel など）
+device, method, brand = service.detect_device_from_row(row)
+# 例: ("AQUOS wish4", "product_name", "AQUOS")
+
+# サイズ抽出（手帳型のみ）
+size, method = service.extract_size_from_product_name(
+    product_name="手帳型カバー/iPhone 8_i6",
+    product_type="手帳型カバー",
+    brand="iPhone",
+    device="iPhone 8"
+)
+# 例: ("i6", "regex") または ("L", "supabase_db")
+
+# 手帳構造タイプ抽出
+structure = service.extract_notebook_structure("手帳型カバー/mirror")
+# 例: "mirror", "ベルト無し", "両面印刷薄型"
+```
+
+**デバイス検出の優先順位:**
+1. 機種専用列から検出（列名に「機種」「端末」などのキーワード）
+2. 商品名列から検出
+3. その他の列（備考、説明など）から検出
+
+**サポートされる機種:**
+- iPhone系（iPhone 15 Pro, iPhone 14 など）
+- Galaxy系（Galaxy S23, A54 など）+ キャリアモデル番号（SC-, SCG-, SCV-）
+- Xperia系 + キャリアモデル番号（SO-, SOG-, SOV-）
+- AQUOS系（wish4, sense8, We2 など）+ キャリアモデル番号（SH-, SHG-, SHV-, A-SH）
+- Pixel系（Pixel 8, Pixel 7a など）
+- OPPO, Xiaomi, arrows など
+
 ## 環境変数
 
 重要な環境変数（`.env`ファイル）:
@@ -454,6 +494,14 @@ rule = PricingRule(
 
 ## 最近の主要な変更
 
+**2025-10-30: 注文統計ページ実装**
+- 在庫管理用の5つの独立した統計ページを作成
+- 件数統計と個数統計を明確に分離
+- 共通レイアウトとReact Contextによるデータ共有
+- サイドバーのクリック展開機能（ハードケース機種別・手帳ケースサイズ別）
+- ハードケース（機種別）と手帳ケース（種類別にサイズ・機種で集計）の分類
+- Next.js App Router のネストされたルート構造を活用
+
 **2025-10-28: 価格マトリクスページ実装**
 - 会社別卸単価設定ページ作成（グリッド形式UI）
 - `product_type_keyword` による価格ルール管理
@@ -504,7 +552,55 @@ rule = PricingRule(
 | 価格マトリクス | http://localhost:3100/pricing-matrix | 会社別卸単価設定 |
 | 顧客管理 | http://localhost:3100/customers | 取引先情報・締め日・支払い日設定 |
 | 注文一覧 | http://localhost:3100/orders | 取り込んだ注文データ表示 |
+| **注文統計** | http://localhost:3100/stats | **在庫管理用の詳細統計情報** |
 | システム設定 | http://localhost:3100/settings | AI設定・請求者情報・DB統計 |
+
+### 注文統計ページ（/stats）
+
+注文統計は在庫管理のために設計された5つの独立したページから構成されています：
+
+| サブページ | URL | 説明 |
+|-----------|-----|------|
+| 📈 総計 | http://localhost:3100/stats | ハードケース/手帳ケース/全体の3カード表示 |
+| 📋 件数統計 | http://localhost:3100/stats/count | 機種別・サイズ別の件数詳細リスト |
+| 📦 個数統計 | http://localhost:3100/stats/quantity | 機種別・サイズ別の個数詳細リスト |
+| 📊 件数サマリー | http://localhost:3100/stats/count-summary | 件数の概要とトップ5 |
+| 🎯 個数サマリー | http://localhost:3100/stats/quantity-summary | 個数の概要とサイズ別トップ5 |
+
+**統計ページの特徴:**
+- **共通サイドバー**: 全ページで統計データを共有し、ページ間の移動が容易
+- **件数 vs 個数の分離**: 注文件数（count）と商品個数（quantity）を明確に区別
+- **展開可能なサマリー**: サイドバーの個数サマリーでハードケース（機種別）・手帳ケース（サイズ別）をクリック展開
+- **リアルタイム更新**: データは一度だけフェッチされ、全ページで共有
+- **商品タイプ別**: ハードケース（機種ごと）、手帳ケース（種類別にサイズと機種で集計）
+
+**データ構造:**
+```typescript
+// 統計API: GET /api/v1/stats/orders/detailed
+{
+  total_orders: number,
+  hardcase_stats: [
+    {
+      device: string,      // 機種名
+      count: number,       // 件数
+      quantity: number,    // 個数
+      by_date: [...]       // 日付別データ
+    }
+  ],
+  notebook_stats_by_type: {
+    "キャメル": {
+      size_stats: [{ size: "L", count: 5, quantity: 15 }],
+      device_stats: [{ device: "iPhone 8", count: 3, quantity: 10 }]
+    }
+  }
+}
+```
+
+**実装パターン:**
+- Next.js 14 App Router with nested routes
+- Shared layout with React Context for data sharing
+- TypeScript interfaces for type safety
+- Conditional null checks with early return pattern
 
 ## 残りの開発タスク
 
