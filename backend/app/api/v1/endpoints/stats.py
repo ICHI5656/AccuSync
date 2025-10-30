@@ -37,7 +37,7 @@ async def get_detailed_order_stats(db: Session = Depends(get_db)):
     for item, order in order_items:
         product_type = item.product_type or ""
         product_name = item.product.name if item.product else ""
-        quantity = item.quantity or 0
+        quantity = item.qty or 0
         total_orders += quantity
 
         # 注文日を取得

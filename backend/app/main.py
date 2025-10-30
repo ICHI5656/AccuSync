@@ -92,6 +92,7 @@ from app.api.v1.endpoints import mapping
 from app.api.v1.endpoints import products
 from app.api.v1.endpoints import pricing_rules
 from app.api.v1.endpoints import customers
+from app.api.v1.endpoints import stats
 
 app.include_router(
     imports.router,
@@ -133,6 +134,12 @@ app.include_router(
     customers.router,
     prefix="/api/v1/customers",
     tags=["customers"]
+)
+
+app.include_router(
+    stats.router,
+    prefix="/api/v1/stats",
+    tags=["stats"]
 )
 
 # TODO: Add more routers when implemented
