@@ -51,7 +51,7 @@ export default function PricingMatrixPage() {
       const [customersRes, productsRes, rulesRes] = await Promise.all([
         fetch('http://localhost:8100/api/v1/settings/customers'),
         fetch('http://localhost:8100/api/v1/products/?limit=1000'),
-        fetch('http://localhost:8100/api/v1/products/pricing')
+        fetch('http://localhost:8100/api/v1/pricing-rules/')
       ])
 
       if (customersRes.ok) setCustomers(await customersRes.json())
@@ -115,23 +115,45 @@ export default function PricingMatrixPage() {
     }
 
     try {
-      const response = await fetch('http://localhost:8100/api/v1/products/pricing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: customerId,
-          product_type_keyword: product.name,
-          price: parseFloat(cell.price),
-          priority: 0
+      // 既存のルールがある場合は更新、ない場合は新規作成
+      if (cell.ruleId) {
+        // 更新（PUT）
+        const response = await fetch(`http://localhost:8100/api/v1/pricing-rules/${cell.ruleId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            price: parseFloat(cell.price),
+            priority: 0
+          })
         })
-      })
 
-      if (response.ok) {
-        alert('保存しました')
-        loadData() // リロード
+        if (response.ok) {
+          alert('更新しました')
+          loadData() // リロード
+        } else {
+          const error = await response.json()
+          alert(`更新に失敗: ${error.detail || JSON.stringify(error)}`)
+        }
       } else {
-        const error = await response.json()
-        alert(`保存に失敗: ${error.detail}`)
+        // 新規作成（POST）
+        const response = await fetch('http://localhost:8100/api/v1/pricing-rules/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customer_id: customerId,
+            product_type_keyword: product.name,
+            price: parseFloat(cell.price),
+            priority: 0
+          })
+        })
+
+        if (response.ok) {
+          alert('保存しました')
+          loadData() // リロード
+        } else {
+          const error = await response.json()
+          alert(`保存に失敗: ${error.detail || JSON.stringify(error)}`)
+        }
       }
     } catch (error) {
       console.error('Failed to save price:', error)
@@ -143,7 +165,7 @@ export default function PricingMatrixPage() {
     if (!confirm('この価格設定を削除しますか？')) return
 
     try {
-      const response = await fetch(`http://localhost:8100/api/v1/products/pricing/${ruleId}`, {
+      const response = await fetch(`http://localhost:8100/api/v1/pricing-rules/${ruleId}`, {
         method: 'DELETE'
       })
 

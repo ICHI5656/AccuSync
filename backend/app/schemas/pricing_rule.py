@@ -3,7 +3,7 @@
 from typing import Optional
 from datetime import date
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PricingRuleBase(BaseModel):
@@ -20,7 +20,15 @@ class PricingRuleBase(BaseModel):
 
 class PricingRuleCreate(PricingRuleBase):
     """Create Pricing Rule request."""
-    pass
+
+    @field_validator('product_type_keyword')
+    @classmethod
+    def validate_product_reference(cls, v, info):
+        """Validate that either product_id or product_type_keyword is provided."""
+        product_id = info.data.get('product_id')
+        if not product_id and not v:
+            raise ValueError('Either product_id or product_type_keyword must be provided')
+        return v
 
 
 class PricingRuleUpdate(BaseModel):
