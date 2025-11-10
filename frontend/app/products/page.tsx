@@ -333,12 +333,12 @@ export default function ProductsPage() {
           {/* Header */}
           <div className="mb-8 flex justify-between items-start">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">商品管理</h1>
+              <h1 className="text-3xl font-bold text-gray-900">商品タイプ管理</h1>
               <p className="text-gray-600 mt-2">
-                商品マスタの登録と<span className="font-semibold text-purple-700">取引先会社ごとの卸値設定</span>を管理します
+                商品タイプマスタの登録と<span className="font-semibold text-purple-700">取引先会社ごとの卸値設定</span>を管理します
               </p>
               <p className="text-sm text-gray-500 mt-1">
-                💡 各商品に対して、取引先会社別に異なる卸値を設定できます。設定した価格はCSVインポート時に自動適用されます。
+                💡 各商品タイプ（ハードケース、手帳型カバー等）に対して、取引先会社別に異なる卸値を設定できます。設定した価格はCSVインポート時に自動適用されます。
               </p>
             </div>
             <Link
@@ -358,7 +358,7 @@ export default function ProductsPage() {
               <div className="flex-1">
                 <input
                   type="text"
-                  placeholder="商品名またはSKUで検索..."
+                  placeholder="商品タイプで検索（例: ハードケース、手帳型カバー）..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -377,7 +377,7 @@ export default function ProductsPage() {
                 onClick={() => openProductForm()}
                 className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
               >
-                ＋ 新規商品登録
+                ＋ 新規商品タイプ登録
               </button>
             </div>
           </div>
@@ -393,8 +393,7 @@ export default function ProductsPage() {
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">商品名</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">商品タイプ</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">標準単価</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">税率</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">単位</th>
@@ -405,8 +404,7 @@ export default function ProductsPage() {
                   <tbody className="bg-white divide-y divide-gray-200">
                     {products.map((product) => (
                       <tr key={product.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{product.sku}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{product.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-700">{product.name}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">¥{parseFloat(product.default_price).toLocaleString()}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{(parseFloat(product.tax_rate) * 100).toFixed(0)}%</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{product.unit}</td>
@@ -458,31 +456,19 @@ export default function ProductsPage() {
       {showProductForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
+            <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
               <h2 className="text-2xl font-bold text-gray-900">
-                {editingProduct ? '商品編集' : '新規商品登録'}
+                {editingProduct ? '商品タイプ編集' : '新規商品タイプ登録'}
               </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                商品タイプ（ハードケース、手帳型カバー等）の基本情報を登録します
+              </p>
             </div>
 
             <form onSubmit={editingProduct ? handleUpdateProduct : handleCreateProduct} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  商品コード（SKU）<span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  disabled={!!editingProduct}
-                  value={productFormData.sku}
-                  onChange={(e) => setProductFormData({ ...productFormData, sku: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                  placeholder="例: PROD001"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  商品名<span className="text-red-500">*</span>
+                  商品タイプ名<span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -490,8 +476,11 @@ export default function ProductsPage() {
                   value={productFormData.name}
                   onChange={(e) => setProductFormData({ ...productFormData, name: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  placeholder="例: サンプル商品A"
+                  placeholder="例: ハードケース、手帳型カバー、ソフトケース"
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 デザインや機種の違いに関わらず、同じタイプの商品は同じ名前で登録してください
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -601,15 +590,14 @@ export default function ProductsPage() {
                 💰 会社別卸値設定
               </h2>
               <div className="mt-3 p-3 bg-white rounded-lg border border-purple-200">
-                <p className="text-sm text-gray-600">商品名</p>
-                <p className="text-lg font-semibold text-gray-900">{selectedProduct.name}</p>
+                <p className="text-sm text-gray-600">商品タイプ</p>
+                <p className="text-2xl font-bold text-purple-700">{selectedProduct.name}</p>
                 <div className="mt-2 flex items-center space-x-4 text-sm">
-                  <span className="text-gray-600">SKU: <span className="font-mono font-semibold">{selectedProduct.sku}</span></span>
                   <span className="text-gray-600">標準単価: <span className="font-bold text-blue-600">¥{parseFloat(selectedProduct.default_price).toLocaleString()}</span></span>
                 </div>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                💡 取引先会社ごとに異なる卸値を設定できます。設定した価格は、CSVインポート時に自動的に適用されます。
+                💡 この商品タイプに対して、取引先会社ごとに異なる卸値を設定できます。設定した価格は、CSVインポート時に自動的に適用されます。
               </p>
             </div>
 
@@ -631,7 +619,7 @@ export default function ProductsPage() {
                     ➕ 会社別卸値を新規追加
                   </h3>
                   <p className="text-xs text-purple-700 mb-4">
-                    この商品に対する取引先会社ごとの特別価格を設定します
+                    この商品タイプに対する取引先会社ごとの特別価格を設定します
                   </p>
 
                   <div className="grid grid-cols-2 gap-4">

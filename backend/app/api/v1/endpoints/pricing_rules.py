@@ -41,12 +41,13 @@ def list_pricing_rules(
     result = []
     for rule in rules:
         customer = db.query(CustomerCompany).filter(CustomerCompany.id == rule.customer_id).first()
-        product = db.query(Product).filter(Product.id == rule.product_id).first()
+        product = db.query(Product).filter(Product.id == rule.product_id).first() if rule.product_id else None
 
         rule_dict = {
             "id": rule.id,
             "customer_id": rule.customer_id,
             "product_id": rule.product_id,
+            "product_type_keyword": rule.product_type_keyword,
             "price": rule.price,
             "min_qty": rule.min_qty,
             "start_date": rule.start_date,
@@ -72,12 +73,13 @@ def get_pricing_rule(rule_id: int, db: Session = Depends(get_db)):
         )
 
     customer = db.query(CustomerCompany).filter(CustomerCompany.id == rule.customer_id).first()
-    product = db.query(Product).filter(Product.id == rule.product_id).first()
+    product = db.query(Product).filter(Product.id == rule.product_id).first() if rule.product_id else None
 
     rule_dict = {
         "id": rule.id,
         "customer_id": rule.customer_id,
         "product_id": rule.product_id,
+        "product_type_keyword": rule.product_type_keyword,
         "price": rule.price,
         "min_qty": rule.min_qty,
         "start_date": rule.start_date,
@@ -97,6 +99,13 @@ def create_pricing_rule(
     db: Session = Depends(get_db)
 ):
     """Create new pricing rule."""
+    # Verify at least one of product_id or product_type_keyword is provided
+    if not rule_data.product_id and not rule_data.product_type_keyword:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either product_id or product_type_keyword must be provided"
+        )
+
     # Verify customer exists
     customer = db.query(CustomerCompany).filter(CustomerCompany.id == rule_data.customer_id).first()
     if not customer:
@@ -105,18 +114,21 @@ def create_pricing_rule(
             detail=f"Customer {rule_data.customer_id} not found"
         )
 
-    # Verify product exists
-    product = db.query(Product).filter(Product.id == rule_data.product_id).first()
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Product {rule_data.product_id} not found"
-        )
+    # Verify product exists if product_id is provided
+    product = None
+    if rule_data.product_id:
+        product = db.query(Product).filter(Product.id == rule_data.product_id).first()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product {rule_data.product_id} not found"
+            )
 
     # Create pricing rule
     rule = PricingRule(
         customer_id=rule_data.customer_id,
         product_id=rule_data.product_id,
+        product_type_keyword=rule_data.product_type_keyword,
         price=rule_data.price,
         min_qty=rule_data.min_qty,
         start_date=rule_data.start_date,
@@ -132,14 +144,15 @@ def create_pricing_rule(
         "id": rule.id,
         "customer_id": rule.customer_id,
         "product_id": rule.product_id,
+        "product_type_keyword": rule.product_type_keyword,
         "price": rule.price,
         "min_qty": rule.min_qty,
         "start_date": rule.start_date,
         "end_date": rule.end_date,
         "priority": rule.priority,
         "customer_name": customer.name,
-        "product_name": product.name,
-        "product_sku": product.sku,
+        "product_name": product.name if product else None,
+        "product_sku": product.sku if product else None,
     }
 
     return PricingRuleResponse(**rule_dict)
@@ -168,12 +181,13 @@ def update_pricing_rule(
     db.refresh(rule)
 
     customer = db.query(CustomerCompany).filter(CustomerCompany.id == rule.customer_id).first()
-    product = db.query(Product).filter(Product.id == rule.product_id).first()
+    product = db.query(Product).filter(Product.id == rule.product_id).first() if rule.product_id else None
 
     rule_dict = {
         "id": rule.id,
         "customer_id": rule.customer_id,
         "product_id": rule.product_id,
+        "product_type_keyword": rule.product_type_keyword,
         "price": rule.price,
         "min_qty": rule.min_qty,
         "start_date": rule.start_date,
@@ -221,12 +235,13 @@ def get_customer_pricing_rules(
 
     result = []
     for rule in rules:
-        product = db.query(Product).filter(Product.id == rule.product_id).first()
+        product = db.query(Product).filter(Product.id == rule.product_id).first() if rule.product_id else None
 
         rule_dict = {
             "id": rule.id,
             "customer_id": rule.customer_id,
             "product_id": rule.product_id,
+            "product_type_keyword": rule.product_type_keyword,
             "price": rule.price,
             "min_qty": rule.min_qty,
             "start_date": rule.start_date,

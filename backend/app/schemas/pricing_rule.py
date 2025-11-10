@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 class PricingRuleBase(BaseModel):
     """Base Pricing Rule schema."""
     customer_id: int = Field(..., description="顧客ID")
-    product_id: int = Field(..., description="商品ID")
+    product_id: Optional[int] = Field(None, description="商品ID（個別商品指定の場合）")
+    product_type_keyword: Optional[str] = Field(None, description="商品タイプキーワード（商品タイプ指定の場合）")
     price: Decimal = Field(..., description="適用単価")
     min_qty: Optional[int] = Field(None, description="最小数量")
     start_date: Optional[date] = Field(None, description="適用開始日")
@@ -35,8 +36,9 @@ class PricingRuleResponse(PricingRuleBase):
     """Pricing Rule response."""
     id: int
     customer_name: Optional[str] = Field(None, description="顧客名")
-    product_name: Optional[str] = Field(None, description="商品名")
-    product_sku: Optional[str] = Field(None, description="商品SKU")
+    product_name: Optional[str] = Field(None, description="商品名（product_id指定時）")
+    product_sku: Optional[str] = Field(None, description="商品SKU（product_id指定時）")
+    product_type_keyword: Optional[str] = Field(None, description="商品タイプキーワード（商品タイプ指定時）")
 
     class Config:
         from_attributes = True
