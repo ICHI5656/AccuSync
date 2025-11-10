@@ -112,10 +112,15 @@ export default function ProductsPage() {
 
   const loadCustomers = async () => {
     try {
-      const response = await fetch('http://localhost:8100/api/v1/orders/customers')
+      const response = await fetch('http://localhost:8100/api/v1/customers')
       if (response.ok) {
         const data = await response.json()
-        setCustomers(data)
+        // データをid, nameの形式に変換
+        const customerList = data.map((customer: any) => ({
+          id: customer.id,
+          name: customer.name
+        }))
+        setCustomers(customerList)
       }
     } catch (error) {
       console.error('Failed to load customers:', error)
