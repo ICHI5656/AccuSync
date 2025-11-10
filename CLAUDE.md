@@ -1324,6 +1324,65 @@ curl -X GET "http://localhost:8100/api/v1/product-types/patterns"
 curl -X GET "http://localhost:8100/api/v1/product-types/statistics"
 ```
 
+**価格マトリクス連携機能（CSVプレビュー）**
+
+CSVインポートのプレビュー時に、価格マトリクスに登録されている卸単価を自動的に表示します。
+
+**APIレベルの実装:**
+```python
+# backend/app/api/v1/endpoints/imports.py
+# プレビューリクエストにcustomer_idを追加
+@router.post("/preview", response_model=ParsePreviewResponse)
+async def preview_parse(request: ParsePreviewRequest, db: Session = Depends(get_db)):
+    # customer_idが指定されている場合、価格マトリクスから価格を取得
+    if request.customer_id and row.get('extracted_memo'):
+        product_type_keyword = row['extracted_memo']
+        pricing_rule = db.query(PricingRule).filter(
+            PricingRule.customer_id == request.customer_id,
+            PricingRule.product_type_keyword == product_type_keyword
+        ).first()
+
+        if pricing_rule:
+            row['matrix_price'] = float(pricing_rule.price)
+            row['price_source'] = 'matrix'
+```
+
+**プレビュー画面の列順（Amazon対応）:**
+1. 📝 商品タイプ（extracted_memo）
+2. 🏷️ ブランド（detected_brand）
+3. 📱 機種（detected_device）
+4. 📏 サイズ（detected_size）
+5. 💰 **価格マトリクス（matrix_price）**← NEW
+6. 🔢 **商品番号**（優先表示）← NEW
+7. 📦 **商品タイトル**（優先表示）← NEW
+8. その他のCSV列
+
+**使い方:**
+1. データ取り込み画面で取引先を選択してCSVアップロード
+2. プレビューボタンをクリック
+3. 価格マトリクスに設定がある商品タイプは緑色背景で卸単価が表示される
+4. 設定がない場合は「-」（グレー背景）
+
+**重要な商品タイプ検出ルール（Amazon）:**
+```python
+# backend/app/services/import_service.py の _extract_product_keywords()
+
+# 優先順位1: SKUに「kaiser」が含まれる場合
+if 'kaiser' in product_sku_lower:
+    return '手帳型kaiser'
+
+# 優先順位2: card/mirrorで手帳型ケース判定（Amazonルール）
+is_amazon_notebook = (
+    'カード' in product_name or 'card' in product_name_lower or
+    'ミラー' in product_name or 'mirror' in product_name_lower or
+    'card' in product_sku_lower or 'mirror' in product_sku_lower
+)
+is_hard_case = 'ハードケース' in product_name
+
+if is_amazon_notebook and not is_hard_case:
+    return '手帳型ケース'
+```
+
 ## 残りの開発タスク
 
 1. **PDF生成機能修復** - WeasyPrint システム依存関係の解決

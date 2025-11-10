@@ -69,6 +69,7 @@ class ParsePreviewRequest(BaseModel):
     file_type: str = Field(..., description="File type")
     preview_rows: int = Field(default=10, ge=1, le=100, description="Number of rows to preview")
     parser_options: Optional[Dict[str, Any]] = Field(None, description="Parser options")
+    customer_id: Optional[int] = Field(None, description="Customer company ID for pricing matrix lookup")
 
 
 class ParsePreviewResponse(BaseModel):

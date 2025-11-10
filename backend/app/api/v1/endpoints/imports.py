@@ -17,6 +17,7 @@ from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
 from app.models.import_job import ImportJob
+from app.models.pricing_rule import PricingRule
 from app.parsers.factory import FileParserFactory
 from app.ai.factory import AIProviderFactory
 from app.tasks.import_tasks import process_file_import
@@ -377,7 +378,27 @@ async def preview_parse(
                 if product_type:
                     logger.info(f"ℹ️ サイズ抽出スキップ（手帳型以外）: 商品タイプ={product_type}")
 
-        # Add extracted_memo, detected_brand, detected_device, detected_size to columns if not present
+            # 価格マトリクスから価格を取得（customer_idが指定されている場合）
+            row['matrix_price'] = None
+            row['price_source'] = 'csv'  # デフォルトはCSV価格
+
+            if request.customer_id and row.get('extracted_memo'):
+                product_type_keyword = row['extracted_memo']
+                try:
+                    # 商品タイプキーワードで価格ルールを検索
+                    pricing_rule = db.query(PricingRule).filter(
+                        PricingRule.customer_id == request.customer_id,
+                        PricingRule.product_type_keyword == product_type_keyword
+                    ).first()
+
+                    if pricing_rule:
+                        row['matrix_price'] = float(pricing_rule.price)
+                        row['price_source'] = 'matrix'
+                        logger.info(f"💰 価格マトリクス適用: {product_type_keyword} → ¥{pricing_rule.price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 価格マトリクス検索エラー: {str(e)}")
+
+        # Add extracted_memo, detected_brand, detected_device, detected_size, matrix_price, price_source to columns if not present
         columns_with_extras = parse_result.columns.copy()
         if 'extracted_memo' not in columns_with_extras:
             columns_with_extras.append('extracted_memo')
@@ -387,6 +408,10 @@ async def preview_parse(
             columns_with_extras.append('detected_device')
         if 'detected_size' not in columns_with_extras:
             columns_with_extras.append('detected_size')
+        if 'matrix_price' not in columns_with_extras:
+            columns_with_extras.append('matrix_price')
+        if 'price_source' not in columns_with_extras:
+            columns_with_extras.append('price_source')
 
         return ParsePreviewResponse(
             success=True,

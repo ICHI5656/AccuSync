@@ -96,6 +96,10 @@ export default function ImportsPage() {
   const [priceInput, setPriceInput] = useState('')
   const [editingProductType, setEditingProductType] = useState('')
 
+  // インライン編集用のstate
+  const [editingCell, setEditingCell] = useState<{fileIndex: number, rowIndex: number} | null>(null)
+  const [editingValue, setEditingValue] = useState('')
+
   // 請求者一覧を取得
   useEffect(() => {
     const fetchIssuers = async () => {
@@ -379,7 +383,8 @@ export default function ImportsPage() {
           upload_id: fileData.uploadId,
           filename: fileData.file.name,
           file_type: fileType,
-          preview_rows: 5
+          preview_rows: 5,
+          customer_id: fileData.selectedCustomerId || null
         })
       })
 
@@ -815,6 +820,71 @@ export default function ImportsPage() {
       console.error('Failed to save pricing rule:', error)
       alert('保存に失敗しました')
     }
+  }
+
+  // インライン編集で商品タイプを保存
+  const saveInlineProductType = async (fileIndex: number, rowIndex: number, newProductType: string) => {
+    if (!newProductType.trim()) {
+      alert('商品タイプを入力してください')
+      return
+    }
+
+    const oldProductType = files[fileIndex].previewData.data[rowIndex]['extracted_memo']
+
+    // 商品タイプが変更された場合のみ学習
+    if (newProductType !== oldProductType) {
+      try {
+        // 学習APIを呼び出し
+        const productName = files[fileIndex].previewData.data[rowIndex]['product_name'] ||
+                           files[fileIndex].previewData.data[rowIndex]['商品名'] || ''
+
+        await fetch('http://localhost:8100/api/v1/product-types/learn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_name: productName || oldProductType,
+            product_type: newProductType,
+            source: 'manual'
+          })
+        })
+
+        // プレビューデータを更新
+        setFiles(prev => {
+          const updated = [...prev]
+          updated[fileIndex] = {
+            ...updated[fileIndex],
+            previewData: {
+              ...updated[fileIndex].previewData,
+              data: updated[fileIndex].previewData.data.map((row: any, idx: number) =>
+                idx === rowIndex ? { ...row, extracted_memo: newProductType } : row
+              )
+            }
+          }
+          return updated
+        })
+
+        alert(`✅ 商品タイプを更新し、学習しました！\n次回から「${oldProductType}」→「${newProductType}」が自動適用されます。`)
+      } catch (error) {
+        console.error('Failed to learn product type:', error)
+        alert('商品タイプの学習に失敗しました')
+      }
+    }
+
+    // 編集モードを解除
+    setEditingCell(null)
+    setEditingValue('')
+  }
+
+  // 編集開始
+  const startEditingProductType = (fileIndex: number, rowIndex: number, currentValue: string) => {
+    setEditingCell({ fileIndex, rowIndex })
+    setEditingValue(currentValue || '')
+  }
+
+  // 編集キャンセル
+  const cancelEditingProductType = () => {
+    setEditingCell(null)
+    setEditingValue('')
   }
 
   const getStatusColor = (status: string) => {
@@ -1282,8 +1352,29 @@ export default function ImportsPage() {
                                 const detectedBrandIndex = fileData.previewData.columns.indexOf('detected_brand')
                                 const detectedDeviceIndex = fileData.previewData.columns.indexOf('detected_device')
                                 const detectedSizeIndex = fileData.previewData.columns.indexOf('detected_size')
-                                const otherColumns = fileData.previewData.columns.filter((c: string) =>
-                                  c !== 'extracted_memo' && c !== 'detected_brand' && c !== 'detected_device' && c !== 'detected_size'
+                                const matrixPriceIndex = fileData.previewData.columns.indexOf('matrix_price')
+                                const priceSourceIndex = fileData.previewData.columns.indexOf('price_source')
+
+                                // 特別な列を除外したその他の列
+                                const allOtherColumns = fileData.previewData.columns.filter((c: string) =>
+                                  c !== 'extracted_memo' && c !== 'detected_brand' && c !== 'detected_device' &&
+                                  c !== 'detected_size' && c !== 'matrix_price' && c !== 'price_source'
+                                )
+
+                                // 商品番号と商品名を優先表示
+                                const productCodePatterns = ['商品番号', '商品管理番号', 'SKU', 'sku', '商品コード', '管理番号', 'product_code']
+                                const productNamePatterns = ['商品名', '品名', '製品名', 'product_name', '商品タイトル']
+
+                                const productCodeCol = allOtherColumns.find(c =>
+                                  productCodePatterns.some(p => c.includes(p))
+                                )
+                                const productNameCol = allOtherColumns.find(c =>
+                                  productNamePatterns.some(p => c.includes(p))
+                                )
+
+                                // 優先列以外の列
+                                const otherColumns = allOtherColumns.filter(c =>
+                                  c !== productCodeCol && c !== productNameCol
                                 )
 
                                 if (extractedMemoIndex !== -1) {
@@ -1322,6 +1413,34 @@ export default function ImportsPage() {
                                   )
                                 }
 
+                                // 価格マトリクスの価格を追加
+                                if (matrixPriceIndex !== -1) {
+                                  columns.push(
+                                    <th key="matrix_price" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-green-100 text-green-800">
+                                      💰 価格マトリクス<br/>
+                                      <span className="text-xs font-normal">（卸単価）</span>
+                                    </th>
+                                  )
+                                }
+
+                                // 商品番号を追加（優先表示）
+                                if (productCodeCol) {
+                                  columns.push(
+                                    <th key={productCodeCol} className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-yellow-100 text-yellow-900">
+                                      🔢 {productCodeCol}
+                                    </th>
+                                  )
+                                }
+
+                                // 商品タイトル（商品名）を追加（優先表示）
+                                if (productNameCol) {
+                                  columns.push(
+                                    <th key={productNameCol} className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-indigo-100 text-indigo-900">
+                                      📦 {productNameCol}
+                                    </th>
+                                  )
+                                }
+
                                 // その他の列を追加
                                 otherColumns.forEach((col: string, i: number) => {
                                   columns.push(
@@ -1349,19 +1468,58 @@ export default function ImportsPage() {
 
                                     // extracted_memoを先頭に追加
                                     if (fileData.previewData.columns.includes('extracted_memo')) {
+                                      const isEditing = editingCell?.fileIndex === index && editingCell?.rowIndex === rowIndex
                                       cells.push(
                                         <td
                                           key="extracted_memo"
-                                          className="px-3 py-2 border-r border-line whitespace-nowrap bg-purple-50 text-purple-700 font-medium cursor-pointer hover:bg-purple-100"
-                                          onClick={() => setPriceModal({
-                                            fileIndex: index,
-                                            rowIndex,
-                                            extractedKeyword: row['extracted_memo'] || '',
-                                            customerId: fileData.selectedCustomerId
-                                          })}
-                                          title="クリックして価格を設定"
+                                          className="px-3 py-2 border-r border-line whitespace-nowrap bg-purple-50"
                                         >
-                                          {row['extracted_memo'] || '-'}
+                                          {isEditing ? (
+                                            <div className="flex items-center gap-2">
+                                              <input
+                                                type="text"
+                                                value={editingValue}
+                                                onChange={(e) => setEditingValue(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    saveInlineProductType(index, rowIndex, editingValue)
+                                                  } else if (e.key === 'Escape') {
+                                                    cancelEditingProductType()
+                                                  }
+                                                }}
+                                                className="px-2 py-1 border border-purple-300 rounded text-sm w-full focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                autoFocus
+                                                placeholder="商品タイプを入力"
+                                              />
+                                              <button
+                                                onClick={() => saveInlineProductType(index, rowIndex, editingValue)}
+                                                className="px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 whitespace-nowrap"
+                                                title="保存"
+                                              >
+                                                保存
+                                              </button>
+                                              <button
+                                                onClick={cancelEditingProductType}
+                                                className="px-2 py-1 bg-gray-300 text-gray-700 rounded text-xs hover:bg-gray-400 whitespace-nowrap"
+                                                title="キャンセル"
+                                              >
+                                                ✕
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center justify-between group">
+                                              <span className="text-purple-700 font-medium">
+                                                {row['extracted_memo'] || <span className="text-gray-400 italic">未設定</span>}
+                                              </span>
+                                              <button
+                                                onClick={() => startEditingProductType(index, rowIndex, row['extracted_memo'])}
+                                                className="ml-2 px-2 py-1 text-xs bg-purple-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-purple-700"
+                                                title="商品タイプを編集"
+                                              >
+                                                編集
+                                              </button>
+                                            </div>
+                                          )}
                                         </td>
                                       )
                                     }
@@ -1464,24 +1622,84 @@ export default function ImportsPage() {
                                     const detectedBrandIndex = fileData.previewData.columns.indexOf('detected_brand')
                                     const detectedDeviceIndex = fileData.previewData.columns.indexOf('detected_device')
                                     const detectedSizeIndex = fileData.previewData.columns.indexOf('detected_size')
-                                    const otherColumns = fileData.previewData.columns.filter((c: string) =>
-                                      c !== 'extracted_memo' && c !== 'detected_brand' && c !== 'detected_device' && c !== 'detected_size'
+                                    const matrixPriceIndex = fileData.previewData.columns.indexOf('matrix_price')
+                                    const priceSourceIndex = fileData.previewData.columns.indexOf('price_source')
+
+                                    // 特別な列を除外したその他の列
+                                    const allOtherColumns = fileData.previewData.columns.filter((c: string) =>
+                                      c !== 'extracted_memo' && c !== 'detected_brand' && c !== 'detected_device' &&
+                                      c !== 'detected_size' && c !== 'matrix_price' && c !== 'price_source'
+                                    )
+
+                                    // 商品番号と商品名を優先表示
+                                    const productCodePatterns = ['商品番号', '商品管理番号', 'SKU', 'sku', '商品コード', '管理番号', 'product_code']
+                                    const productNamePatterns = ['商品名', '品名', '製品名', 'product_name', '商品タイトル']
+
+                                    const productCodeCol = allOtherColumns.find(c =>
+                                      productCodePatterns.some(p => c.includes(p))
+                                    )
+                                    const productNameCol = allOtherColumns.find(c =>
+                                      productNamePatterns.some(p => c.includes(p))
+                                    )
+
+                                    // 優先列以外の列
+                                    const otherColumns = allOtherColumns.filter(c =>
+                                      c !== productCodeCol && c !== productNameCol
                                     )
 
                                     if (extractedMemoIndex !== -1) {
+                                      const isEditing = editingCell?.fileIndex === index && editingCell?.rowIndex === rowIndex
                                       cells.push(
                                         <td
                                           key="extracted_memo"
-                                          className="px-3 py-2 border-r border-line whitespace-nowrap bg-purple-50 text-purple-700 font-medium cursor-pointer hover:bg-purple-100"
-                                          onClick={() => setPriceModal({
-                                            fileIndex: index,
-                                            rowIndex,
-                                            extractedKeyword: row['extracted_memo'] || '',
-                                            customerId: fileData.selectedCustomerId
-                                          })}
-                                          title="クリックして価格を設定"
+                                          className="px-3 py-2 border-r border-line whitespace-nowrap bg-purple-50"
                                         >
-                                          {row['extracted_memo'] || '-'}
+                                          {isEditing ? (
+                                            <div className="flex items-center gap-2">
+                                              <input
+                                                type="text"
+                                                value={editingValue}
+                                                onChange={(e) => setEditingValue(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    saveInlineProductType(index, rowIndex, editingValue)
+                                                  } else if (e.key === 'Escape') {
+                                                    cancelEditingProductType()
+                                                  }
+                                                }}
+                                                className="px-2 py-1 border border-purple-300 rounded text-sm w-full focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                autoFocus
+                                                placeholder="商品タイプを入力"
+                                              />
+                                              <button
+                                                onClick={() => saveInlineProductType(index, rowIndex, editingValue)}
+                                                className="px-2 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 whitespace-nowrap"
+                                                title="保存"
+                                              >
+                                                保存
+                                              </button>
+                                              <button
+                                                onClick={cancelEditingProductType}
+                                                className="px-2 py-1 bg-gray-300 text-gray-700 rounded text-xs hover:bg-gray-400 whitespace-nowrap"
+                                                title="キャンセル"
+                                              >
+                                                ✕
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center justify-between group">
+                                              <span className="text-purple-700 font-medium">
+                                                {row['extracted_memo'] || <span className="text-gray-400 italic">未設定</span>}
+                                              </span>
+                                              <button
+                                                onClick={() => startEditingProductType(index, rowIndex, row['extracted_memo'])}
+                                                className="ml-2 px-2 py-1 text-xs bg-purple-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-purple-700"
+                                                title="商品タイプを編集"
+                                              >
+                                                編集
+                                              </button>
+                                            </div>
+                                          )}
                                         </td>
                                       )
                                     }
@@ -1552,6 +1770,53 @@ export default function ImportsPage() {
                                           title={sizeTooltip}
                                         >
                                           {isDetected ? `📏 ${size}` : '-'}
+                                        </td>
+                                      )
+                                    }
+
+                                    // 価格マトリクスの価格を追加
+                                    if (matrixPriceIndex !== -1) {
+                                      const matrixPrice = row['matrix_price']
+                                      const priceSource = row['price_source']
+                                      const hasMatrixPrice = matrixPrice !== null && matrixPrice !== undefined
+
+                                      cells.push(
+                                        <td
+                                          key="matrix_price"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            hasMatrixPrice
+                                              ? 'bg-green-50 text-green-700'
+                                              : 'bg-gray-50 text-gray-500'
+                                          }`}
+                                          title={hasMatrixPrice ? `価格マトリクスから取得: ¥${matrixPrice}` : '価格マトリクスに設定なし'}
+                                        >
+                                          {hasMatrixPrice ? `💰 ¥${Math.floor(matrixPrice).toLocaleString()}` : '-'}
+                                        </td>
+                                      )
+                                    }
+
+                                    // 商品番号を追加（優先表示）
+                                    if (productCodeCol) {
+                                      const value = row[productCodeCol]
+                                      cells.push(
+                                        <td
+                                          key={productCodeCol}
+                                          className="px-3 py-2 border-r border-line whitespace-nowrap bg-yellow-50 text-yellow-900"
+                                        >
+                                          {value || '-'}
+                                        </td>
+                                      )
+                                    }
+
+                                    // 商品タイトル（商品名）を追加（優先表示）
+                                    if (productNameCol) {
+                                      const value = row[productNameCol]
+                                      cells.push(
+                                        <td
+                                          key={productNameCol}
+                                          className="px-3 py-2 border-r border-line whitespace-nowrap bg-indigo-50 text-indigo-900"
+                                        >
+                                          {value || '-'}
                                         </td>
                                       )
                                     }
