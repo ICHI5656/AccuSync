@@ -11,6 +11,9 @@ from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.models.import_job import ImportJob
 from app.models.mapping_template import MappingTemplate
+from app.models.product_type_pattern import ProductTypePattern
+from app.models.device_pattern import DevicePattern
+from app.models.size_pattern import SizePattern
 
 __all__ = [
     "IssuerCompany",
@@ -26,4 +29,7 @@ __all__ = [
     "AuditLog",
     "ImportJob",
     "MappingTemplate",
+    "ProductTypePattern",
+    "DevicePattern",
+    "SizePattern",
 ]

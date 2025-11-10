@@ -26,5 +26,23 @@ celery_app.conf.update(
     worker_max_tasks_per_child=1000,
 )
 
+# Celery Beat スケジュール設定
+celery_app.conf.beat_schedule = {
+    'auto-generate-invoices-daily': {
+        'task': 'auto_generate_invoices',
+        'schedule': 3600.0,  # 1時間ごと（テスト用）本番では86400.0（1日）に変更
+        'options': {
+            'expires': 3600,  # 1時間以内に実行されなければ期限切れ
+        }
+    },
+    'sync-device-master-daily': {
+        'task': 'sync_device_master_from_supabase',
+        'schedule': 86400.0,  # 毎日1回（24時間ごと）
+        'options': {
+            'expires': 7200,  # 2時間以内に実行されなければ期限切れ
+        }
+    },
+}
+
 # タスク自動検出設定
 celery_app.autodiscover_tasks(['app.tasks'])

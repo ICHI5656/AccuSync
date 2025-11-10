@@ -21,6 +21,9 @@ interface OrderItem {
   tax_rate: string
   tax_amount: string
   total_in_tax: string
+  product_type: string | null
+  device_info: string | null
+  size_info: string | null
 }
 
 interface Order {
@@ -53,6 +56,9 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [summary, setSummary] = useState<OrderSummary | null>(null)
   const [loading, setLoading] = useState(false)
+  const [editingItemId, setEditingItemId] = useState<number | null>(null)
+  const [editingValue, setEditingValue] = useState<string>('')
+  const [updating, setUpdating] = useState(false)
 
   // 取引先一覧を取得
   useEffect(() => {
@@ -110,6 +116,52 @@ export default function OrdersPage() {
   useEffect(() => {
     fetchOrders()
   }, [])
+
+  // 商品タイプ更新処理
+  const handleProductTypeUpdate = async (itemId: number, newProductType: string) => {
+    setUpdating(true)
+    try {
+      const response = await fetch(`http://localhost:8100/api/v1/orders/items/${itemId}/product-type`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          product_type: newProductType
+        })
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        alert(`✅ 商品タイプを更新しました！\n\n学習結果:\n- パターン: ${result.learned_pattern.pattern}\n- 信頼度: ${(result.learned_pattern.confidence * 100).toFixed(0)}%\n- 使用回数: ${result.learned_pattern.usage_count}`)
+
+        // データを再取得
+        await fetchOrders()
+        setEditingItemId(null)
+        setEditingValue('')
+      } else {
+        const error = await response.json()
+        alert(`❌ エラー: ${error.detail}`)
+      }
+    } catch (error) {
+      console.error('Failed to update product type:', error)
+      alert('❌ 商品タイプの更新に失敗しました')
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  // 編集開始
+  const startEditing = (itemId: number, currentType: string | null) => {
+    setEditingItemId(itemId)
+    setEditingValue(currentType || '')
+  }
+
+  // 編集キャンセル
+  const cancelEditing = () => {
+    setEditingItemId(null)
+    setEditingValue('')
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -276,6 +328,7 @@ export default function OrdersPage() {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-4 py-2 text-left text-xs font-medium text-muted">商品名</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-muted">商品タイプ</th>
                           <th className="px-4 py-2 text-right text-xs font-medium text-muted">数量</th>
                           <th className="px-4 py-2 text-right text-xs font-medium text-muted">単価</th>
                           <th className="px-4 py-2 text-right text-xs font-medium text-muted">小計（税抜）</th>
@@ -288,6 +341,47 @@ export default function OrdersPage() {
                         {order.items.map((item) => (
                           <tr key={item.id}>
                             <td className="px-4 py-3 text-ink">{item.product_name}</td>
+                            <td className="px-4 py-3">
+                              {editingItemId === item.id ? (
+                                <div className="flex items-center space-x-2">
+                                  <input
+                                    type="text"
+                                    value={editingValue}
+                                    onChange={(e) => setEditingValue(e.target.value)}
+                                    className="px-2 py-1 border border-accent rounded focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                                    placeholder="商品タイプを入力"
+                                    disabled={updating}
+                                  />
+                                  <button
+                                    onClick={() => handleProductTypeUpdate(item.id, editingValue)}
+                                    disabled={updating || !editingValue.trim()}
+                                    className="px-2 py-1 bg-accent text-white rounded text-xs hover:bg-accent/90 disabled:opacity-50"
+                                  >
+                                    {updating ? '保存中...' : '保存'}
+                                  </button>
+                                  <button
+                                    onClick={cancelEditing}
+                                    disabled={updating}
+                                    className="px-2 py-1 bg-gray-300 text-ink rounded text-xs hover:bg-gray-400 disabled:opacity-50"
+                                  >
+                                    キャンセル
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-ink">
+                                    {item.product_type || <span className="text-muted italic">未設定</span>}
+                                  </span>
+                                  <button
+                                    onClick={() => startEditing(item.id, item.product_type)}
+                                    className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200"
+                                    title="商品タイプを編集"
+                                  >
+                                    編集
+                                  </button>
+                                </div>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-right text-ink">{item.qty}</td>
                             <td className="px-4 py-3 text-right text-ink">¥{parseFloat(item.unit_price).toLocaleString()}</td>
                             <td className="px-4 py-3 text-right text-ink">¥{parseFloat(item.subtotal_ex_tax).toLocaleString()}</td>

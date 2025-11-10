@@ -29,6 +29,10 @@ class Product(BaseModel):
     unit = Column(String(20), nullable=True, default="個", comment="単位")
     is_active = Column(Boolean, nullable=False, default=True, comment="有効フラグ")
 
+    # 商品詳細情報
+    device_model = Column(String(100), nullable=True, comment="対応機種: iPhone 14 Pro, Galaxy S23 など")
+    notebook_structure = Column(String(100), nullable=True, comment="手帳構造: 両面印刷薄型, ベルト無し手帳型 など")
+
     # Relationships
     order_items = relationship("OrderItem", back_populates="product")
     invoice_items = relationship("InvoiceItem", back_populates="product")

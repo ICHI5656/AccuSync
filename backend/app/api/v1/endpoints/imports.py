@@ -5,6 +5,7 @@ Import API endpoints for file upload and data import.
 import os
 import uuid
 import tempfile
+import logging
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
@@ -13,11 +14,18 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+
+logger = logging.getLogger(__name__)
 from app.models.import_job import ImportJob
 from app.parsers.factory import FileParserFactory
 from app.ai.factory import AIProviderFactory
 from app.tasks.import_tasks import process_file_import
 from app.services.import_service import ImportService
+from app.services.device_detection_service import DeviceDetectionService
+from app.services.product_type_learning_service import ProductTypeLearningService
+from app.services.device_learning_service import DeviceLearningService
+from app.services.size_learning_service import SizeLearningService
+from app.services.supabase_service import SupabaseService
 from app.schemas.import_job import (
     FileUploadRequest,
     FileUploadResponse,
@@ -146,6 +154,13 @@ async def preview_parse(
         preview_data = parse_result.data[:request.preview_rows]
 
         # Extract keywords from product name for each row
+        # 機種検出とサイズ抽出を実行（デザインマスター連携も含む）
+        device_detector = DeviceDetectionService(db)
+        product_type_learning_service = ProductTypeLearningService(db)
+        device_learning_service = DeviceLearningService(db)
+        size_learning_service = SizeLearningService(db)
+        supabase_service = SupabaseService()
+
         for row in preview_data:
             # Get product name from various possible keys
             product_name = (
@@ -155,20 +170,200 @@ async def preview_parse(
                 row.get('製品名') or
                 ''
             )
-            if product_name:
+
+            # 商品番号（SKU）から取得（Amazonの場合はこれがデザイン番号）
+            product_code = (
+                row.get('商品番号') or
+                row.get('商品管理番号') or
+                row.get('SKU') or
+                row.get('sku') or
+                row.get('商品コード') or
+                row.get('管理番号') or
+                row.get('product_code') or
+                ''
+            )
+
+            # 商品タイプの抽出（優先順位順）
+            product_type_from_design = None
+            design_no = None
+
+            # デバッグ: 商品番号を確認
+            if product_code:
+                logger.info(f"🔍 商品番号取得: {product_code.strip()[:50]}...")
+            else:
+                logger.info(f"⚠️ 商品番号が見つかりません")
+
+            # 1. 商品番号（SKU）→ ローカルDB（デザインマスター）検索（最優先）
+            if product_code and product_code.strip():
+                logger.info(f"🔎 商品番号でローカルDB検索開始: {product_code.strip()}")
+                product_type_from_design = device_detector.get_product_type_by_sku(product_code.strip())
+                if product_type_from_design:
+                    design_no = product_code.strip()
+                    row['extracted_memo'] = product_type_from_design
+                    row['design_number'] = design_no
+                    row['product_type_source'] = 'local_db_sku'
+                    logger.info(f"✅ ローカルDB（SKU）から商品タイプ取得: {design_no} → {product_type_from_design}")
+
+            # 2. 商品番号（SKU）→ Supabase曖昧検索
+            if not product_type_from_design and product_code and product_code.strip():
+                logger.info(f"🔎 商品番号でSupabase曖昧検索: {product_code.strip()}")
+                product_type_from_design = supabase_service.fuzzy_search_product_type(product_code.strip())
+                if product_type_from_design:
+                    design_no = product_code.strip()
+                    row['extracted_memo'] = product_type_from_design
+                    row['design_number'] = design_no
+                    row['product_type_source'] = 'supabase_fuzzy'
+                    logger.info(f"✅ Supabase曖昧検索から商品タイプ取得: {design_no} → {product_type_from_design}")
+
+            # 2.5. 商品番号（デザイン番号）→ 楽天SKU管理システムDB
+            if not product_type_from_design and product_code and product_code.strip():
+                if hasattr(device_detector, 'rakuten_sku') and device_detector.rakuten_sku:
+                    logger.info(f"🔎 楽天SKU管理システムで商品タイプ検索: {product_code.strip()}")
+                    product_type_from_rakuten = device_detector.rakuten_sku.get_product_type_by_design_number(product_code.strip())
+                    if product_type_from_rakuten:
+                        design_no = product_code.strip()
+                        row['extracted_memo'] = product_type_from_rakuten
+                        row['design_number'] = design_no
+                        row['product_type_source'] = 'rakuten_sku_db'
+                        product_type_from_design = product_type_from_rakuten
+                        logger.info(f"✅ 楽天SKU管理システムから商品タイプ取得: {design_no} → {product_type_from_rakuten}")
+
+            # 3. 商品番号（SKU）→ 学習パターンから予測
+            if not product_type_from_design and product_code and product_code.strip():
+                logger.info(f"🔎 商品番号で学習パターン予測: {product_code.strip()}")
+                prediction = product_type_learning_service.predict_product_type(product_code.strip())
+                if prediction:
+                    product_type_from_design, confidence, method = prediction
+                    design_no = product_code.strip()
+                    row['extracted_memo'] = product_type_from_design
+                    row['design_number'] = design_no
+                    row['product_type_source'] = method
+                    logger.info(f"✅ 学習パターンから商品タイプ予測: {design_no} → {product_type_from_design} (信頼度: {confidence:.2f})")
+
+            # 4. 商品名 → デザイン番号抽出 → デザインマスター検索
+            if not product_type_from_design and product_name:
+                logger.info(f"🔎 商品名からデザイン番号抽出: {product_name[:30]}...")
+                product_type_from_design, design_no = device_detector.get_product_type_from_design(product_name)
+                if product_type_from_design:
+                    row['extracted_memo'] = product_type_from_design
+                    row['design_number'] = design_no
+                    row['product_type_source'] = 'design_master_name'
+                    logger.info(f"✅ 商品名から商品タイプ取得: {design_no} → {product_type_from_design}")
+
+            # 5. 商品名 → 学習パターンから予測
+            if not product_type_from_design and product_name:
+                logger.info(f"🔎 商品名で学習パターン予測: {product_name[:30]}...")
+                prediction = product_type_learning_service.predict_product_type(product_name)
+                if prediction:
+                    product_type_from_design, confidence, method = prediction
+                    row['extracted_memo'] = product_type_from_design
+                    row['design_number'] = design_no if design_no else ''
+                    row['product_type_source'] = method
+                    logger.info(f"✅ 学習パターン（商品名）から商品タイプ予測: {product_name[:30]}... → {product_type_from_design} (信頼度: {confidence:.2f})")
+
+            # 6. 正規表現による商品タイプ抽出（最終フォールバック）
+            if not product_type_from_design and product_name:
+                logger.info(f"🔎 正規表現による商品タイプ抽出（フォールバック）")
                 extracted_keywords = ImportService._extract_product_keywords(product_name)
                 row['extracted_memo'] = extracted_keywords
-            else:
+                row['design_number'] = design_no if design_no else ''
+                row['product_type_source'] = 'regex'
+                logger.info(f"✅ 正規表現による商品タイプ: {extracted_keywords}")
+            elif not product_type_from_design:
                 row['extracted_memo'] = ''
+                row['design_number'] = ''
+                row['product_type_source'] = 'not_found'
+                logger.warning(f"⚠️ 商品タイプを検出できませんでした: {product_name[:50] if product_name else 'N/A'}...")
 
-        # Add extracted_memo to columns if not present
-        columns_with_memo = parse_result.columns.copy()
-        if 'extracted_memo' not in columns_with_memo:
-            columns_with_memo.append('extracted_memo')
+            # 機種検出（優先順位順）
+            device = None
+            method = None
+            brand = None
+
+            # 1. デザインマスターから機種を取得（商品番号から）
+            if product_code and product_code.strip():
+                device_from_design = supabase_service.get_device_by_design(product_code.strip())
+                if device_from_design:
+                    device = device_from_design
+                    method = 'design_master'
+                    # ブランド名を抽出（最初の単語）
+                    brand = device.split()[0] if ' ' in device else device.split('/')[0] if '/' in device else None
+                    logger.info(f"📱 デザインマスターから機種取得: {product_code.strip()} → {device}")
+
+            # 2. 学習パターンから機種を予測（商品名から）
+            if not device and product_name:
+                prediction = device_learning_service.predict_device(product_name)
+                if prediction:
+                    device, brand, confidence, method = prediction
+                    logger.info(f"🎯 学習パターンから機種予測: {product_name[:30]}... → {device} (信頼度: {confidence:.2f})")
+
+            # 3. 通常の機種検出（選択肢列、機種専用列、商品名列、その他の列）
+            if not device:
+                device, method, brand = device_detector.detect_device_from_row(row)
+
+            row['detected_device'] = device if device else '未検出'
+            row['device_detection_method'] = method if device else 'not_found'
+            row['detected_brand'] = brand if brand else '未検出'
+
+            # サイズ抽出（手帳型カバーの場合のみ）
+            product_name = (
+                row.get('product_name') or
+                row.get('商品名') or
+                row.get('品名') or
+                row.get('製品名') or
+                ''
+            )
+            product_type = row.get('extracted_memo', '')
+
+            # 手帳型カバーの場合のみサイズを抽出
+            if product_type and '手帳' in product_type:
+                size = None
+                size_method = None
+
+                if product_name:
+                    # 1. 学習パターンから予測（最優先）
+                    prediction = size_learning_service.predict_size(product_name, device_name=device)
+                    if prediction:
+                        size, confidence, size_method = prediction
+                        logger.info(f"📏 学習パターンからサイズ予測: {product_name[:30]}... → {size} (信頼度: {confidence:.2f})")
+
+                    # 2. 商品属性（_i6, _L など）から抽出
+                    if not size:
+                        size, size_method = device_detector.extract_size_from_product_name(
+                            product_name,
+                            product_type,
+                            brand=brand,
+                            device=device,
+                            row=row  # 選択肢列からの抽出も可能にする
+                        )
+                        logger.info(f"📏 商品属性からサイズ抽出: {product_name[:30]}... → サイズ={size}, 方法={size_method}")
+
+                    row['detected_size'] = size if size else '-'
+                    row['size_detection_method'] = size_method if size else 'not_found'
+                else:
+                    row['detected_size'] = '-'
+                    row['size_detection_method'] = 'not_found'
+            else:
+                # ハードケース等、手帳型以外はサイズ抽出しない
+                row['detected_size'] = '-'
+                row['size_detection_method'] = 'not_applicable'
+                if product_type:
+                    logger.info(f"ℹ️ サイズ抽出スキップ（手帳型以外）: 商品タイプ={product_type}")
+
+        # Add extracted_memo, detected_brand, detected_device, detected_size to columns if not present
+        columns_with_extras = parse_result.columns.copy()
+        if 'extracted_memo' not in columns_with_extras:
+            columns_with_extras.append('extracted_memo')
+        if 'detected_brand' not in columns_with_extras:
+            columns_with_extras.append('detected_brand')
+        if 'detected_device' not in columns_with_extras:
+            columns_with_extras.append('detected_device')
+        if 'detected_size' not in columns_with_extras:
+            columns_with_extras.append('detected_size')
 
         return ParsePreviewResponse(
             success=True,
-            columns=columns_with_memo,
+            columns=columns_with_extras,
             data=preview_data,
             row_count=len(preview_data),
             total_rows_estimate=parse_result.row_count,

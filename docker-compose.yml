@@ -20,6 +20,7 @@ services:
       retries: 5
     networks:
       - accusync-network
+    restart: unless-stopped
 
   # Redis for Celery and Caching
   redis:
@@ -37,6 +38,7 @@ services:
       retries: 5
     networks:
       - accusync-network
+    restart: unless-stopped
 
   # MinIO (S3-compatible storage)
   minio:
@@ -58,6 +60,7 @@ services:
       retries: 3
     networks:
       - accusync-network
+    restart: unless-stopped
 
   # FastAPI Backend
   api:
@@ -78,6 +81,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       AI_PROVIDER: ${AI_PROVIDER:-openai}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      DESIGN_MASTER_SUPABASE_URL: ${DESIGN_MASTER_SUPABASE_URL}
+      DESIGN_MASTER_SUPABASE_ANON_KEY: ${DESIGN_MASTER_SUPABASE_ANON_KEY}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-true}
       DEFAULT_ISSUER_NAME: ${DEFAULT_ISSUER_NAME:-株式会社AccuSync}
@@ -93,6 +100,7 @@ services:
       - ./config:/app/config
       - ./templates:/app/templates
       - upload_temp:/tmp/accusync_uploads
+      - /mnt/c/Users/info/Desktop/sin/csv_sku.k/data:/external_data/csv_sku.k:ro
     depends_on:
       db:
         condition: service_healthy
@@ -123,18 +131,53 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       AI_PROVIDER: ${AI_PROVIDER:-openai}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      DESIGN_MASTER_SUPABASE_URL: ${DESIGN_MASTER_SUPABASE_URL}
+      DESIGN_MASTER_SUPABASE_ANON_KEY: ${DESIGN_MASTER_SUPABASE_ANON_KEY}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-true}
     volumes:
       - ./backend:/app
       - ./config:/app/config
       - upload_temp:/tmp/accusync_uploads
+      - /mnt/c/Users/info/Desktop/sin/csv_sku.k/data:/external_data/csv_sku.k:ro
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     command: celery -A app.core.celery_app worker --loglevel=info
+    networks:
+      - accusync-network
+    restart: unless-stopped
+
+  # Celery Beat (Scheduler)
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: accusync-celery-beat
+    environment:
+      DATABASE_URL: postgresql://accusync:accusync_pass@db:5432/accusync
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production-12345678}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-true}
+    volumes:
+      - ./backend:/app
+      - ./config:/app/config
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.core.celery_app beat --loglevel=info
     networks:
       - accusync-network
     restart: unless-stopped

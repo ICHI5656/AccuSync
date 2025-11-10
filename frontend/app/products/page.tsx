@@ -329,7 +329,12 @@ export default function ProductsPage() {
           <div className="mb-8 flex justify-between items-start">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">商品管理</h1>
-              <p className="text-gray-600 mt-2">商品マスタの登録と顧客別価格設定を管理します</p>
+              <p className="text-gray-600 mt-2">
+                商品マスタの登録と<span className="font-semibold text-purple-700">取引先会社ごとの卸値設定</span>を管理します
+              </p>
+              <p className="text-sm text-gray-500 mt-1">
+                💡 各商品に対して、取引先会社別に異なる卸値を設定できます。設定した価格はCSVインポート時に自動適用されます。
+              </p>
             </div>
             <Link
               href="/pricing-matrix"
@@ -389,7 +394,7 @@ export default function ProductsPage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">税率</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">単位</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状態</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">管理機能</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -420,9 +425,10 @@ export default function ProductsPage() {
                           </button>
                           <button
                             onClick={() => openPricingForm(product)}
-                            className="text-purple-600 hover:text-purple-900"
+                            className="text-purple-600 hover:text-purple-900 font-medium"
+                            title="取引先会社ごとに異なる卸値を設定"
                           >
-                            価格設定
+                            💰 会社別卸値
                           </button>
                           {product.is_active && (
                             <button
@@ -585,10 +591,20 @@ export default function ProductsPage() {
       {selectedProduct && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-2xl font-bold text-gray-900">価格設定</h2>
-              <p className="text-gray-600 mt-1">
-                {selectedProduct.name} ({selectedProduct.sku}) - 標準単価: ¥{parseFloat(selectedProduct.default_price).toLocaleString()}
+            <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-blue-50">
+              <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                💰 会社別卸値設定
+              </h2>
+              <div className="mt-3 p-3 bg-white rounded-lg border border-purple-200">
+                <p className="text-sm text-gray-600">商品名</p>
+                <p className="text-lg font-semibold text-gray-900">{selectedProduct.name}</p>
+                <div className="mt-2 flex items-center space-x-4 text-sm">
+                  <span className="text-gray-600">SKU: <span className="font-mono font-semibold">{selectedProduct.sku}</span></span>
+                  <span className="text-gray-600">標準単価: <span className="font-bold text-blue-600">¥{parseFloat(selectedProduct.default_price).toLocaleString()}</span></span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                💡 取引先会社ごとに異なる卸値を設定できます。設定した価格は、CSVインポート時に自動的に適用されます。
               </p>
             </div>
 
@@ -597,21 +613,26 @@ export default function ProductsPage() {
               {!showPricingForm && (
                 <button
                   onClick={() => setShowPricingForm(true)}
-                  className="mb-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                  className="mb-4 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
                 >
-                  ＋ 顧客別価格を追加
+                  ＋ 取引先会社の卸値を追加
                 </button>
               )}
 
               {/* Pricing Rule Form */}
               {showPricingForm && (
-                <form onSubmit={handleCreatePricingRule} className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">新規価格ルール</h3>
+                <form onSubmit={handleCreatePricingRule} className="mb-6 p-4 bg-purple-50 rounded-lg border-2 border-purple-300">
+                  <h3 className="text-lg font-semibold text-purple-900 mb-2 flex items-center">
+                    ➕ 会社別卸値を新規追加
+                  </h3>
+                  <p className="text-xs text-purple-700 mb-4">
+                    この商品に対する取引先会社ごとの特別価格を設定します
+                  </p>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        取引先<span className="text-red-500">*</span>
+                        取引先会社<span className="text-red-500">*</span>
                       </label>
                       <select
                         required
@@ -628,7 +649,7 @@ export default function ProductsPage() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        適用単価<span className="text-red-500">*</span>
+                        会社別卸値（円）<span className="text-red-500">*</span>
                       </label>
                       <input
                         type="number"
@@ -637,8 +658,11 @@ export default function ProductsPage() {
                         value={pricingFormData.price}
                         onChange={(e) => setPricingFormData({ ...pricingFormData, price: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                        placeholder="800"
+                        placeholder="例: 800"
                       />
+                      <p className="text-xs text-gray-500 mt-1">
+                        標準単価: ¥{selectedProduct ? parseFloat(selectedProduct.default_price).toLocaleString() : ''}
+                      </p>
                     </div>
 
                     <div>
@@ -715,51 +739,83 @@ export default function ProductsPage() {
 
               {/* Pricing Rules List */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-3">設定済み価格ルール</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1 flex items-center">
+                  🏢 設定済み会社別卸値
+                </h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  {pricingRules.length > 0 ? `${pricingRules.length}社の取引先に個別価格を設定しています` : '取引先会社ごとの個別価格を設定できます'}
+                </p>
                 {pricingRules.length === 0 ? (
-                  <p className="text-gray-500 text-sm">顧客別価格は設定されていません</p>
+                  <div className="p-6 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-center">
+                    <p className="text-gray-500 text-sm">まだ会社別卸値が設定されていません</p>
+                    <p className="text-xs text-gray-400 mt-1">上のボタンから取引先ごとの価格を追加してください</p>
+                  </div>
                 ) : (
                   <div className="space-y-3">
-                    {pricingRules.map((rule) => (
-                      <div key={rule.id} className="p-4 bg-white border border-gray-200 rounded-lg">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-3">
-                              <h4 className="text-base font-semibold text-gray-900">{rule.customer_name}</h4>
-                              <span className="text-lg font-bold text-purple-600">
-                                ¥{parseFloat(rule.price).toLocaleString()}
-                              </span>
+                    {pricingRules.map((rule) => {
+                      const standardPrice = selectedProduct ? parseFloat(selectedProduct.default_price) : 0
+                      const specialPrice = parseFloat(rule.price)
+                      const priceDiff = specialPrice - standardPrice
+                      const diffPercent = standardPrice > 0 ? ((priceDiff / standardPrice) * 100).toFixed(1) : 0
+
+                      return (
+                        <div key={rule.id} className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-lg hover:shadow-md transition-shadow">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-3 mb-2">
+                                <h4 className="text-lg font-bold text-gray-900">🏢 {rule.customer_name}</h4>
+                              </div>
+                              <div className="flex items-baseline space-x-3">
+                                <div>
+                                  <p className="text-xs text-gray-600">会社別卸値</p>
+                                  <span className="text-2xl font-bold text-purple-600">
+                                    ¥{specialPrice.toLocaleString()}
+                                  </span>
+                                </div>
+                                {priceDiff !== 0 && (
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-gray-400">→</span>
+                                    <div>
+                                      <p className="text-xs text-gray-500">標準価格との差額</p>
+                                      <span className={`text-sm font-semibold ${priceDiff < 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                                        {priceDiff > 0 ? '+' : ''}{priceDiff.toLocaleString()}円 ({diffPercent}%)
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-600">
+                                {rule.min_qty && (
+                                  <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded font-medium">
+                                    📦 最小数量: {rule.min_qty}個
+                                  </span>
+                                )}
+                                {rule.start_date && (
+                                  <span className="px-2 py-1 bg-green-100 text-green-700 rounded font-medium">
+                                    🟢 開始: {rule.start_date}
+                                  </span>
+                                )}
+                                {rule.end_date && (
+                                  <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded font-medium">
+                                    🔴 終了: {rule.end_date}
+                                  </span>
+                                )}
+                                <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded font-medium">
+                                  ⭐ 優先度: {rule.priority}
+                                </span>
+                              </div>
                             </div>
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
-                              {rule.min_qty && (
-                                <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
-                                  最小数量: {rule.min_qty}
-                                </span>
-                              )}
-                              {rule.start_date && (
-                                <span className="px-2 py-1 bg-green-50 text-green-700 rounded">
-                                  開始: {rule.start_date}
-                                </span>
-                              )}
-                              {rule.end_date && (
-                                <span className="px-2 py-1 bg-orange-50 text-orange-700 rounded">
-                                  終了: {rule.end_date}
-                                </span>
-                              )}
-                              <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded">
-                                優先度: {rule.priority}
-                              </span>
-                            </div>
+                            <button
+                              onClick={() => handleDeletePricingRule(rule.id)}
+                              className="ml-4 px-3 py-1 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors"
+                              title="この会社別卸値を削除"
+                            >
+                              🗑️ 削除
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleDeletePricingRule(rule.id)}
-                            className="ml-4 text-red-600 hover:text-red-900 text-sm font-medium"
-                          >
-                            削除
-                          </button>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>

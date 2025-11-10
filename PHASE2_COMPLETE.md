@@ -1,4 +1,7 @@
-# Phase 2完了レポート
+# Phase 2-4完了レポート
+
+**最終更新**: 2025年10月29日
+**実装状況**: Phase 1-4 完了（約85%）
 
 ## 実装完了内容
 
@@ -64,7 +67,50 @@
   - バリデーション
   - データベース投入
 
-### 4. データ取り込みAPI（backend/app/api/v1/endpoints/imports.py）
+### 4. ImportService - データ取り込みロジック（backend/app/services/import_service.py）
+
+#### ✅ 顧客管理機能
+- 顧客自動作成・検出
+- AI顧客タイプ判定統合（法人/個人）
+- 識別子による重複防止
+
+#### ✅ 商品照合機能
+- SKU優先照合
+- 商品名フォールバック検索
+- 商品タイプキーワード抽出（`extracted_memo`）
+- デザイン名自動除外
+
+#### ✅ 価格決定ロジック（3段階優先順位）
+1. **PricingRule（最優先）**: 顧客×商品タイプの卸単価
+2. **Product.default_price**: 商品マスタの標準単価
+3. **CSV単価**: CSVファイルの単価（フォールバック）
+
+#### ✅ 価格ルール自動登録機能（2025-10-29追加）✨
+- CSV取り込み時に商品タイプ別の単価を自動登録
+- 取引先×商品タイプの組み合わせで価格ルール作成
+- 既存ルールがある場合は更新
+- 次回インポート時に自動適用
+
+**動作フロー**:
+```
+CSV単価あり → extracted_memo（商品タイプ）抽出
+             → PricingRule自動登録/更新
+             → 次回から自動適用（CSVの単価は無視）
+```
+
+**実装メソッド**:
+```python
+@staticmethod
+def _auto_register_product_type_pricing(
+    db: Session,
+    customer_id: int,
+    product_type_keyword: str,
+    csv_unit_price: Decimal
+) -> Optional[str]:
+    """商品タイプ別の価格ルールを自動登録・更新"""
+```
+
+### 5. データ取り込みAPI（backend/app/api/v1/endpoints/imports.py）
 
 #### ✅ RESTful APIエンドポイント
 
@@ -95,7 +141,9 @@
 - ページネーション
 
 **POST /api/v1/imports/jobs/{job_id}/import**
-- パース済みデータのDB投入（TODO）
+- パース済みデータのDB投入
+- ImportService統合
+- 価格ルール自動登録実行
 
 **DELETE /api/v1/imports/jobs/{job_id}**
 - ジョブ削除

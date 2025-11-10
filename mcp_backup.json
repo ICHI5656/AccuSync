@@ -1,0 +1,59 @@
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "magic": {
+      "command": "npx",
+      "args": ["@21st-dev/magic"],
+      "env": {
+        "TWENTYFIRST_API_KEY": "your-api-key-here"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    },
+    "morphllm-fast-apply": {
+      "command": "npx",
+      "args": ["@morph-llm/morph-fast-apply"],
+      "env": {
+        "MORPH_API_KEY": "your-api-key-here"
+      }
+    },
+    "serena": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena",
+        "start-mcp-server",
+        "--context",
+        "ide-assistant"
+      ]
+    },
+    "tavily": {
+      "command": "npx",
+      "args": ["-y", "tavily-mcp@latest"],
+      "env": {
+        "TAVILY_API_KEY": "your-api-key-here"
+      }
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    },
+    "figma": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-figma"],
+      "env": {
+        "FIGMA_PERSONAL_ACCESS_TOKEN": "your-figma-token-here"
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ from app.models.order import Order, OrderItem
 from app.models.customer_company import CustomerCompany
 from app.models.issuer_company import IssuerCompany
 from app.models.product import Product
+from app.services.product_type_learning_service import ProductTypeLearningService
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +33,9 @@ class OrderItemResponse(BaseModel):
     tax_rate: Decimal
     tax_amount: Decimal
     total_in_tax: Decimal
+    product_type: Optional[str] = None
+    device_info: Optional[str] = None
+    size_info: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -214,4 +218,81 @@ async def get_order_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve summary: {str(e)}"
+        )
+
+
+class UpdateProductTypeRequest(BaseModel):
+    """商品タイプ更新リクエスト"""
+    product_type: str
+
+
+@router.put("/items/{order_item_id}/product-type")
+async def update_product_type(
+    order_item_id: int,
+    request: UpdateProductTypeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    注文明細の商品タイプを更新し、機械学習で学習します。
+
+    ユーザーが商品タイプを手動で変更すると、システムが自動的にパターンを学習し、
+    次回のインポート時に同じパターンの商品名があれば自動的に適用されます。
+    """
+    try:
+        # 注文明細を取得
+        order_item = db.query(OrderItem).filter(OrderItem.id == order_item_id).first()
+
+        if not order_item:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Order item {order_item_id} not found"
+            )
+
+        # 商品情報を取得
+        product = db.query(Product).filter(Product.id == order_item.product_id).first()
+        product_name = product.name if product else None
+
+        # 商品タイプを更新
+        old_product_type = order_item.product_type
+        order_item.product_type = request.product_type
+        db.commit()
+        db.refresh(order_item)
+
+        # 機械学習で学習（商品名がある場合のみ）
+        if product_name:
+            learning_service = ProductTypeLearningService(db)
+            pattern = learning_service.learn_from_product_name(
+                product_name=product_name,
+                product_type=request.product_type,
+                source='manual'
+            )
+
+            return {
+                "success": True,
+                "message": f"Product type updated and learned: {product_name} → {request.product_type}",
+                "order_item_id": order_item_id,
+                "old_product_type": old_product_type,
+                "new_product_type": request.product_type,
+                "learned_pattern": {
+                    "pattern": pattern.pattern,
+                    "confidence": pattern.confidence,
+                    "usage_count": pattern.usage_count
+                }
+            }
+        else:
+            return {
+                "success": True,
+                "message": "Product type updated (no product name for learning)",
+                "order_item_id": order_item_id,
+                "old_product_type": old_product_type,
+                "new_product_type": request.product_type
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update product type: {str(e)}"
         )

@@ -15,6 +15,7 @@ from app.models.product import Product
 from app.models.order import Order
 from app.models.issuer_company import IssuerCompany
 from app.services.issuer_service import IssuerService
+from app.tasks.device_sync_tasks import sync_device_master_from_supabase, get_device_sync_status
 from pydantic import BaseModel, Field
 
 
@@ -246,4 +247,63 @@ async def list_customers(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve customer list: {str(e)}"
+        )
+
+
+class DeviceSyncStatusResponse(BaseModel):
+    """Device master sync status response."""
+    success: bool
+    local_db: Dict[str, Any] = Field(..., description="Local database status")
+    supabase: Dict[str, Any] = Field(..., description="Supabase status")
+    sync_needed: bool = Field(..., description="Whether sync is needed")
+    timestamp: str
+
+
+class DeviceSyncResponse(BaseModel):
+    """Device master sync response."""
+    success: bool
+    synced_count: int = Field(0, description="Number of synced devices")
+    total_fetched: int = Field(0, description="Total devices fetched from Supabase")
+    errors: List[str] = Field(default_factory=list, description="Sync errors")
+    error: str | None = Field(None, description="Error message if sync failed")
+    timestamp: str
+
+
+@router.get("/device-master/status", response_model=DeviceSyncStatusResponse)
+async def get_device_master_status():
+    """
+    Get device master data sync status.
+    Shows local DB count, Supabase availability, and whether sync is needed.
+    """
+    try:
+        # Run task synchronously (since it's a quick status check)
+        result = get_device_sync_status()
+        return DeviceSyncStatusResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get device master status: {str(e)}"
+        )
+
+
+@router.post("/device-master/sync", response_model=DeviceSyncResponse)
+async def sync_device_master():
+    """
+    Sync device master data from Supabase to local PostgreSQL.
+
+    This endpoint triggers a background task to fetch all device data from Supabase
+    and update the local database. Use this when new devices are added to Supabase.
+    """
+    try:
+        # Trigger async task
+        task = sync_device_master_from_supabase.delay()
+
+        # Wait for result (with timeout)
+        result = task.get(timeout=60)
+
+        return DeviceSyncResponse(**result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Device master sync failed: {str(e)}"
         )

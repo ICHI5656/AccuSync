@@ -72,6 +72,7 @@ def process_file_import(
         parser_options = parser_options or {}
         parser_options['apply_ai_mapping'] = apply_ai_mapping
         parser_options['target_fields'] = target_fields
+        parser_options['db_session'] = db  # Pass database session for device detection
 
         # Use asyncio to run async parser
         import asyncio

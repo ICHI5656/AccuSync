@@ -16,6 +16,7 @@ from app.models.product import Product
 from app.models.pricing_rule import PricingRule
 from app.ai.factory import AIProviderFactory
 from app.services.issuer_service import IssuerService
+from app.services.device_detection_service import DeviceDetectionService
 
 
 class ImportService:
@@ -209,6 +210,42 @@ class ImportService:
                 # Extract extracted_memo (AI抽出キーワード)
                 extracted_memo = row.get('extracted_memo', '')
 
+                # Extract detected device and size info (自動検出情報)
+                detected_brand = row.get('detected_brand', '')
+                detected_device = row.get('detected_device', '')
+                detected_size = row.get('detected_size', '')
+
+                # If device/size info not in row, detect it now
+                if not detected_brand or not detected_device or not detected_size:
+                    device_detector = DeviceDetectionService(db)
+
+                    # Detect device (brand + device name)
+                    if not detected_brand or not detected_device:
+                        device, method, brand = device_detector.detect_device_from_row(row)
+                        if not detected_brand:
+                            detected_brand = brand or ''
+                        if not detected_device:
+                            detected_device = device or ''
+
+                    # Detect size (only for 手帳型カバー)
+                    if not detected_size and product_name:
+                        size, size_method = device_detector.extract_size_from_product_name(
+                            product_name,
+                            extracted_memo,  # product_type
+                            brand=detected_brand,
+                            device=detected_device
+                        )
+                        detected_size = size if size else ''
+
+                # Build device_info string (ブランド + 機種)
+                if detected_brand and detected_device:
+                    device_info = detected_device  # detected_deviceには既にブランドが含まれている
+                else:
+                    device_info = None
+
+                # Build size_info string
+                size_info = detected_size if detected_size and detected_size != '-' else None
+
                 if not product_name:
                     warnings.append(f'Row {row_index}: 商品名が見つかりません')
                     skipped_count += 1
@@ -307,9 +344,23 @@ class ImportService:
                     subtotal_ex_tax=subtotal,
                     tax_rate=tax_rate_decimal,
                     tax_amount=tax_amount,
-                    total_in_tax=total
+                    total_in_tax=total,
+                    product_type=extracted_memo,  # 商品タイプ（ハードケース/手帳型カバーなど）
+                    device_info=device_info,  # 機種情報（iPhone 15 Pro/AQUOS wish4など）
+                    size_info=size_info  # サイズ情報（L/i6/特大など）
                 )
                 db.add(order_item)
+
+                # 商品タイプ別の卸単価を自動登録（extracted_memoがある場合）
+                if extracted_memo and unit_price > 0:
+                    pricing_rule_msg = ImportService._auto_register_product_type_pricing(
+                        db=db,
+                        customer_id=customer.id,
+                        product_type_keyword=extracted_memo,
+                        csv_unit_price=unit_price
+                    )
+                    if pricing_rule_msg:
+                        warnings.append(pricing_rule_msg)
 
                 imported_count += 1
 
@@ -463,19 +514,34 @@ class ImportService:
 
         keywords = []
 
-        # 製品タイプを抽出（優先順位順：長いものから先にチェック）
-        product_types = [
-            '手帳型カバー', 'ハードケース',
-            'iPadケース', 'iPhoneケース', 'スマホケース', 'タブレットケース',
-            'ソフトケース', 'バンパーケース', 'クリアケース', 'レザーケース',
-            'PCケース', '保護フィルム', 'ガラスフィルム',
-            'バンパー', 'リング', 'スタンド', 'ストラップ',
-            'グリップ', 'ホルダー', 'アダプター', 'ケーブル', '充電器'
-        ]
-        for ptype in product_types:
-            if ptype in product_name:
-                keywords.append(ptype)
-                break  # 最初に見つかったタイプのみ
+        # 特別ルール: カードポケット/カードバック/カード収納がある場合は手帳型ケース
+        card_keywords = ['カードポケット', 'カードバック', 'カード収納', 'カードケース', 'カードホルダー']
+        has_card_feature = any(keyword in product_name for keyword in card_keywords)
+
+        # ハードケースは例外（カード機能付きハードケースもある）
+        is_hard_case = 'ハードケース' in product_name
+
+        # カード機能があり、ハードケースでない場合は手帳型ケース
+        if has_card_feature and not is_hard_case:
+            keywords.append('手帳型ケース')
+        else:
+            # 製品タイプを抽出（優先順位順：長いものから先にチェック）
+            # 重要: 「手帳型」は「スタンド」「ストラップ」よりも優先
+            product_types = [
+                '手帳型カバー', '手帳型ケース', '手帳型',  # 手帳型は最優先
+                'ハードケース',
+                'iPadケース', 'iPhoneケース', 'スマホケース', 'タブレットケース',
+                'ソフトケース', 'バンパーケース', 'クリアケース', 'レザーケース',
+                'PCケース', '保護フィルム', 'ガラスフィルム',
+                # 注意: 「スタンド」「ストラップ」は付属品なので優先度を下げる
+                # 'バンパー', 'リング', 'スタンド', 'ストラップ',
+                'バンパー', 'リング',
+                'グリップ', 'ホルダー', 'アダプター', 'ケーブル', '充電器'
+            ]
+            for ptype in product_types:
+                if ptype in product_name:
+                    keywords.append(ptype)
+                    break  # 最初に見つかったタイプのみ
 
         # mirrorやcardなどのバリエーションを抽出
         if 'mirror' in product_name.lower():
@@ -487,3 +553,61 @@ class ImportService:
         # これにより、同じ商品タイプ（例：ハードケース）は同じ単価になる
 
         return ' / '.join(keywords) if keywords else ''
+
+    @staticmethod
+    def _auto_register_product_type_pricing(
+        db: Session,
+        customer_id: int,
+        product_type_keyword: str,
+        csv_unit_price: Decimal
+    ) -> Optional[str]:
+        """
+        商品タイプ別の価格ルールを自動登録・更新する
+
+        Args:
+            db: データベースセッション
+            customer_id: 取引先ID
+            product_type_keyword: 商品タイプキーワード（例: "ハードケース", "手帳型カバー / mirror"）
+            csv_unit_price: CSVから取得した単価
+
+        Returns:
+            実行結果メッセージ（警告/情報）
+        """
+        try:
+            # 既存の価格ルールを検索
+            existing_rule = db.query(PricingRule).filter(
+                PricingRule.customer_id == customer_id,
+                PricingRule.product_type_keyword == product_type_keyword
+            ).first()
+
+            # 顧客名を取得（メッセージ用）
+            from app.models.customer_company import CustomerCompany
+            customer = db.query(CustomerCompany).filter(CustomerCompany.id == customer_id).first()
+            customer_name = customer.name if customer else f"ID:{customer_id}"
+
+            if existing_rule:
+                # 既存ルールがある場合
+                if existing_rule.price != csv_unit_price:
+                    # 価格が異なる場合のみ更新
+                    old_price = existing_rule.price
+                    existing_rule.price = csv_unit_price
+                    db.flush()
+                    return f'価格ルール更新: {customer_name} × {product_type_keyword} : ¥{old_price} → ¥{csv_unit_price}'
+                else:
+                    # 価格が同じ場合はスキップ（メッセージなし）
+                    return None
+            else:
+                # 新規作成
+                new_rule = PricingRule(
+                    customer_id=customer_id,
+                    product_type_keyword=product_type_keyword,
+                    price=csv_unit_price,
+                    priority=0
+                )
+                db.add(new_rule)
+                db.flush()
+                return f'価格ルール新規登録: {customer_name} × {product_type_keyword} : ¥{csv_unit_price}'
+
+        except Exception as e:
+            # エラーが発生してもインポート自体は継続
+            return f'価格ルール登録エラー ({product_type_keyword}): {str(e)}'

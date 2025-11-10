@@ -7,8 +7,10 @@ import chardet
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+from sqlalchemy.orm import Session
 
 from .base import FileParser, ParseResult
+from app.services.device_detection_service import DeviceDetectionService
 
 
 class CSVParser(FileParser):
@@ -32,6 +34,7 @@ class CSVParser(FileParser):
         skip_rows: int = 0,
         apply_ai_mapping: bool = False,
         target_fields: Optional[List[str]] = None,
+        db_session: Optional[Session] = None,
         **kwargs
     ) -> ParseResult:
         """
@@ -92,6 +95,36 @@ class CSVParser(FileParser):
                     warnings.append('AI column mapping applied')
                 except Exception as e:
                     warnings.append(f'AI mapping failed: {str(e)}')
+
+            # Apply device detection to all rows
+            if db_session:
+                try:
+                    detector = DeviceDetectionService(db_session)
+                    for row in data:
+                        # Detect device from row
+                        device, detection_method, brand = detector.detect_device_from_row(row)
+
+                        # Extract size from row (prioritize options column)
+                        product_name = row.get('商品名', '') or row.get('product_name', '')
+                        product_type = row.get('extracted_memo', '')
+                        size, size_method = detector.extract_size_from_product_name(
+                            product_name=product_name,
+                            product_type=product_type,
+                            brand=brand,
+                            device=device,
+                            row=row  # Pass row to check options column
+                        )
+
+                        # Store detected values in row
+                        row['detected_brand'] = brand or ''
+                        row['detected_device'] = device or ''
+                        row['detected_size'] = size or '-'
+                        row['detection_method'] = detection_method or ''
+                        row['size_detection_method'] = size_method or ''
+
+                    warnings.append(f'Device detection applied to {len(data)} rows')
+                except Exception as e:
+                    warnings.append(f'Device detection failed: {str(e)}')
 
             # Check data quality with AI
             if self.ai_provider:

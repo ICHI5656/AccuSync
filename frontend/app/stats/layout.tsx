@@ -22,6 +22,13 @@ interface NotebookTypeStats {
   device_stats: { device: string; count: number; quantity: number }[]
 }
 
+interface CustomerCompany {
+  id: number
+  code: string
+  name: string
+  is_individual: boolean
+}
+
 interface StatsData {
   total_orders: number
   hardcase_stats: DeviceStats[]
@@ -40,12 +47,38 @@ export default function StatsLayout({ children }: { children: React.ReactNode })
   const [loading, setLoading] = useState(true)
   const [expandedHardcase, setExpandedHardcase] = useState(false)
   const [expandedNotebook, setExpandedNotebook] = useState(false)
+  const [customers, setCustomers] = useState<CustomerCompany[]>([])
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null)
   const pathname = usePathname()
 
+  // 取引先一覧を取得
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      try {
+        const response = await fetch('http://localhost:8100/api/v1/settings/customers')
+        if (response.ok) {
+          const data = await response.json()
+          setCustomers(data)
+        }
+      } catch (error) {
+        console.error('Failed to fetch customers:', error)
+      }
+    }
+    fetchCustomers()
+  }, [])
+
+  // 統計データを取得
   useEffect(() => {
     const fetchStats = async () => {
+      setLoading(true)
       try {
-        const response = await fetch('/api/v1/stats/orders/detailed')
+        const params = new URLSearchParams()
+        if (selectedCustomerId) {
+          params.append('customer_id', selectedCustomerId.toString())
+        }
+
+        const url = `http://localhost:8100/api/v1/stats/orders/detailed${params.toString() ? '?' + params.toString() : ''}`
+        const response = await fetch(url)
         if (response.ok) {
           const data = await response.json()
           setStats(data)
@@ -60,7 +93,7 @@ export default function StatsLayout({ children }: { children: React.ReactNode })
     }
 
     fetchStats()
-  }, [])
+  }, [selectedCustomerId])
 
   const isActive = (path: string) => pathname === path
 
@@ -95,10 +128,37 @@ export default function StatsLayout({ children }: { children: React.ReactNode })
           <div className="p-6">
             <h2 className="text-lg font-bold text-ink mb-6">📊 統計メニュー</h2>
 
+            {/* 取引先選択 */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-ink mb-2">
+                取引先会社
+              </label>
+              <select
+                value={selectedCustomerId || ''}
+                onChange={(e) => setSelectedCustomerId(e.target.value ? parseInt(e.target.value) : null)}
+                className="w-full px-3 py-2 border border-line rounded-lg focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+              >
+                <option value="">すべて</option>
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.name} {customer.is_individual ? '（個人）' : '（法人）'}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted mt-1">
+                {selectedCustomerId ? '選択した会社の注文のみ表示' : '全会社の注文を表示'}
+              </p>
+            </div>
+
             {/* 総注文数サマリー */}
             <div className="mb-6 p-4 bg-gradient-to-r from-accent/10 to-accent/5 rounded-lg border border-accent/20">
               <div className="text-xs text-muted mb-1">総注文数</div>
               <div className="text-2xl font-bold text-accent">{stats.total_orders}件</div>
+              {selectedCustomerId && (
+                <div className="text-xs text-accent mt-1">
+                  {customers.find(c => c.id === selectedCustomerId)?.name || ''}のみ
+                </div>
+              )}
             </div>
 
             {/* ナビゲーションメニュー */}

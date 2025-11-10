@@ -294,7 +294,7 @@ size, method = service.extract_size_from_product_name(
     brand="iPhone",
     device="iPhone 8"
 )
-# 例: ("i6", "regex") または ("L", "supabase_db")
+# 例: ("i6", "regex") または ("L", "device_master_db")
 
 # 手帳構造タイプ抽出
 structure = service.extract_notebook_structure("手帳型カバー/mirror")
@@ -313,6 +313,299 @@ structure = service.extract_notebook_structure("手帳型カバー/mirror")
 - AQUOS系（wish4, sense8, We2 など）+ キャリアモデル番号（SH-, SHG-, SHV-, A-SH）
 - Pixel系（Pixel 8, Pixel 7a など）
 - OPPO, Xiaomi, arrows など
+
+**サイズ抽出の動作（ポータビリティ対応済み）:**
+- **正規表現優先**: `_i6`, `_L`, `_M`, `_特大`, `_大` などのパターンを検出
+- **ローカルDBフォールバック**: 正規表現で見つからない場合、`device_attributes`テーブルから取得
+- **Supabase（オプション）**: ローカルDBにもない場合のみ外部DB検索（ネットワーク不要）
+- **⚠️ 重要**: サイズ抽出は**手帳型カバーのみ**が対象（ハードケースは対象外）
+
+**多店舗フォーマット対応（選択肢列からの機種抽出）:**
+```python
+# 選択肢列から機種とサイズを抽出
+device, size, brand = service.extract_device_from_options(options_text)
+```
+
+**サポートされるフォーマット:**
+1. **楽天形式（:セパレーター）**
+   - `機種【iPhone】:iPhone 6[i6]`
+   - `機種【AQUOS_2】:wish4(SH-52E)[3L]`
+
+2. **楽天形式（=セパレーター）**
+   - `機種【Google/OPPO/isai】=Pixel 8 a[L]`
+   - ▼や-で始まる未選択項目は自動除外
+
+3. **ワーマ形式**
+   - `機種の選択(iPhone)=iPhone SE 第2世代 [i6]`
+
+4. **Amazon形式（商品名から検出）**
+   - `スマQ いphone14Pro 対応 ケース` → iPhone14Pro
+   - `スマQ あくおす sense5G SH-53A` → AQUOS sense5
+   - ひらがな表記（いふぉん、あくおす等）にも対応
+
+**検出優先順位:**
+1. 選択肢列のパターンマッチング（Pattern1/Pattern2）
+2. 商品名列からの正規表現抽出
+3. その他の列からの検出
+4. サイズはローカルDB（device_attributes）から自動補完
+
+**10. 機種マスターDB（DeviceMasterService）- ネットワーク非依存**
+```python
+# backend/app/services/device_master_service.py
+# ローカルPostgreSQLを優先、Supabaseはオプション
+
+from app.services.device_master_service import DeviceMasterService
+
+service = DeviceMasterService(db)
+
+# サイズ取得（ローカルDB優先）
+size = service.get_device_size(brand="iPhone", device_name="iPhone 15 Pro")
+# 返り値: "i6s" （ローカルDBから）
+
+# 機種詳細情報取得
+info = service.get_device_info(brand="AQUOS", device_name="AQUOS wish4")
+# 返り値: {"brand": "AQUOS", "device_name": "AQUOS wish4",
+#         "size_category": "M", "attribute_value": "Medium"}
+
+# 接続テスト
+results = service.test_connection()
+# 返り値: {"local_db": True, "supabase": False}
+```
+
+**重要: 別のパソコンでの初期セットアップ**
+```bash
+# Docker起動後、必ず実行（機種マスターDBセットアップ）
+./setup-device-master.sh  # Linux/Mac
+setup-device-master.bat   # Windows
+
+# これにより96機種のサイズ情報がローカルDBに登録され、
+# ネットワーク環境に依存せず機種抽出・サイズ取得が動作します
+```
+
+**データベーステーブル構造:**
+```sql
+-- device_attributes: ローカル機種マスター（ネットワーク非依存）
+CREATE TABLE device_attributes (
+    id SERIAL PRIMARY KEY,
+    brand VARCHAR(50) NOT NULL,        -- iPhone, Galaxy, AQUOS, etc.
+    device_name VARCHAR(100) NOT NULL, -- iPhone 15 Pro, Galaxy A54, etc.
+    size_category VARCHAR(20),         -- i6, L, M, 特大, etc.
+    attribute_value VARCHAR(100),      -- Large, Medium, Small, etc.
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス（高速検索用）
+CREATE INDEX idx_device_brand_name ON device_attributes (brand, device_name);
+
+-- product_type_patterns: 商品タイプ学習テーブル（機械学習）
+CREATE TABLE product_type_patterns (
+    id SERIAL PRIMARY KEY,
+    pattern VARCHAR(255) NOT NULL,         -- 商品名のパターン（部分一致）
+    product_type VARCHAR(100) NOT NULL,    -- 商品タイプ（例: ハードケース）
+    confidence FLOAT NOT NULL DEFAULT 1.0, -- 信頼度（0.0-1.0）
+    source VARCHAR(50) NOT NULL DEFAULT 'manual', -- 'manual' or 'auto'
+    usage_count INTEGER NOT NULL DEFAULT 0,       -- 使用回数
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- インデックス（高速検索用）
+CREATE INDEX idx_product_type_patterns_pattern ON product_type_patterns (pattern);
+CREATE INDEX idx_product_type_patterns_product_type ON product_type_patterns (product_type);
+CREATE INDEX idx_product_type_patterns_confidence ON product_type_patterns (confidence);
+```
+
+**優先順位（サイズ取得）:**
+1. 正規表現パターン（商品名内の `_i6`, `_L` 等）
+2. ローカルPostgreSQL `device_attributes` テーブル
+3. Supabase（接続可能な場合のみ、オプション）
+
+**11. 楽天SKU管理システムDB連携（RakutenSKUService）**
+```python
+# backend/app/services/rakuten_sku_service.py
+# 外部プロジェクト csv_sku.k のDBから商品情報を取得
+
+from app.services.rakuten_sku_service import RakutenSKUService
+
+service = RakutenSKUService()  # デフォルト: /external_data/csv_sku.k/inventory.db
+
+# SKU番号からサイズ取得（手帳型商品）
+size = service.get_size_by_sku("sku_r00001")
+# 返り値: "i6", "L", "M" など
+
+# 機種名からサイズ取得（devices JOIN techo_sizes）
+size = service.get_size_by_device(brand="iPhone", device_name="iPhone 15 Pro")
+# 返り値: "i6s" （techo_sizesマスターから）
+
+# デザイン番号から商品タイプ取得
+product_type = service.get_product_type_by_design_number("ami_kaiser-A_1r-A")
+# 返り値: "手帳型カバー", "ハードケース" など
+
+# 接続テスト
+is_available = service.test_connection()
+# 返り値: True/False
+```
+
+**Docker環境でのボリュームマウント:**
+```yaml
+# docker-compose.yml で外部DBをマウント
+volumes:
+  - /mnt/c/Users/info/Desktop/sin/csv_sku.k/data:/external_data/csv_sku.k:ro
+```
+
+**外部DB構造（csv_sku.k）:**
+- `techo_products`: SKU別の手帳型商品マスター（size_classification, compatible_device）
+- `product_masters`: 商品番号別のマスター（product_type, available_sizes）
+- `devices`: 機種マスター（device_name, brand_id, techo_size_id）
+- `techo_sizes`: サイズマスター（SS, S, M, L, LL, 2L, 3L, i6）
+- `brands`: ブランドマスター（name, display_name）
+
+**12. 機種・サイズの機械学習機能**
+```python
+# backend/app/services/device_learning_service.py
+# backend/app/services/size_learning_service.py
+# ユーザーの手動変更を学習し、次回から自動適用
+
+from app.services.device_learning_service import DeviceLearningService
+from app.services.size_learning_service import SizeLearningService
+
+# 機種の学習
+device_learning = DeviceLearningService(db)
+pattern = device_learning.learn_from_product_name(
+    product_name="いphone14Pro ケース",
+    device_name="iPhone 14 Pro",
+    brand="iPhone",
+    source="manual"  # 'manual' または 'auto'
+)
+# 信頼度: 手動=0.9, 自動=0.7
+
+# 機種の予測
+device, brand, confidence, method = device_learning.predict_device(
+    product_name="いphone14Pro 対応"
+)
+# 返り値: ("iPhone 14 Pro", "iPhone", 0.9, "ml_manual")
+
+# サイズの学習（手帳型のみ）
+size_learning = SizeLearningService(db)
+pattern = size_learning.learn_from_product_name(
+    product_name="手帳型カバー/iPhone 8_i6",
+    size="i6",
+    device_name="iPhone 8",
+    brand="iPhone",
+    source="manual"
+)
+
+# サイズの予測
+size, confidence, method = size_learning.predict_size(
+    product_name="手帳型カバー/iPhone 8",
+    device_name="iPhone 8"  # オプション: 機種指定でより高精度
+)
+# 返り値: ("i6", 0.95, "ml_manual")
+```
+
+**学習パターンDB:**
+```sql
+-- device_patterns: 機種学習テーブル
+CREATE TABLE device_patterns (
+    id SERIAL PRIMARY KEY,
+    pattern VARCHAR(255) NOT NULL,         -- 商品名パターン
+    device_name VARCHAR(100) NOT NULL,     -- 正しい機種名
+    brand VARCHAR(50),                     -- ブランド
+    confidence FLOAT NOT NULL DEFAULT 1.0, -- 信頼度（0.0-1.0）
+    source VARCHAR(50) NOT NULL,           -- 'manual' or 'auto'
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- size_patterns: サイズ学習テーブル
+CREATE TABLE size_patterns (
+    id SERIAL PRIMARY KEY,
+    pattern VARCHAR(255) NOT NULL,         -- 商品名パターン
+    size VARCHAR(20) NOT NULL,             -- 正しいサイズ
+    device_name VARCHAR(100),              -- オプション: 機種名
+    brand VARCHAR(50),                     -- オプション: ブランド
+    confidence FLOAT NOT NULL DEFAULT 1.0,
+    source VARCHAR(50) NOT NULL,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+```
+
+**インポート時の統合優先順位:**
+
+**機種検出:**
+1. デザインマスター（商品番号から）
+2. **機種学習パターン**（商品名から）← NEW
+3. 通常の機種検出（選択肢列、機種列、商品名、その他）
+
+**サイズ抽出（手帳型のみ）:**
+1. **サイズ学習パターン**（商品名+機種から）← NEW
+2. 商品属性正規表現（`_i6`, `_L` など）
+3. **楽天SKU管理システムDB**（SKU番号から）← NEW
+4. **楽天SKU管理システムDB**（機種名から）← NEW
+5. ローカルDB（device_attributes）
+6. Supabase（オプション）
+
+**商品タイプ検出:**
+1. ローカルDB（SKU）
+2. Supabase曖昧検索
+3. **楽天SKU管理システムDB**（デザイン番号から）← NEW
+4. 商品タイプ学習パターン（SKU）
+5. デザインマスター（商品名）
+6. 商品タイプ学習パターン（商品名）
+7. 正規表現フォールバック
+
+**13. 機種マスターDB同期機能（Supabase→ローカルDB）**
+```bash
+# 1. 同期状態を確認
+curl http://localhost:8100/api/v1/settings/device-master/status
+
+# レスポンス例:
+# {
+#   "success": true,
+#   "local_db": {
+#     "count": 100,
+#     "last_updated": "2025-11-07T06:49:36.482804"
+#   },
+#   "supabase": {
+#     "available": false,  # Supabase接続可否
+#     "count": 0
+#   },
+#   "sync_needed": false,  # 同期が必要かどうか
+#   "timestamp": "2025-11-07T07:25:57.025472"
+# }
+
+# 2. 手動で同期を実行（SupabaseからローカルDBへ）
+curl -X POST http://localhost:8100/api/v1/settings/device-master/sync
+
+# レスポンス例:
+# {
+#   "success": true,
+#   "synced_count": 150,      # 同期された機種数
+#   "total_fetched": 150,     # Supabaseから取得した総数
+#   "errors": [],
+#   "error": null,
+#   "timestamp": "2025-11-07T07:30:00.123456"
+# }
+```
+
+**自動同期設定:**
+- Celery Beatで**毎日1回**自動的にSupabaseと同期
+- 新しい機種が追加された場合、自動的にローカルDBに反映
+- 手動同期も可能（APIエンドポイント経由）
+
+**UPSERT動作:**
+- 既存の機種（brand + device_name）は更新
+- 新しい機種は追加
+- 削除された機種はそのまま残る（上書きのみ）
+
+**Supabaseが利用不可の場合:**
+- ローカルDBのデータをそのまま使用
+- エラーは発生せず、警告のみログに出力
+- 手動で`setup-device-master.sh`を実行すれば初期データを再登録可能
 
 ## 環境変数
 
@@ -412,6 +705,62 @@ docker-compose logs -f frontend
 - 原因: APIコンテナが起動していない
 - 解決: `docker-compose up -d api`
 
+**問題: Dockerビルド時のパッケージエラー**
+- エラー: `Package 'libgdk-pixbuf2.0-0' has no installation candidate`
+- 原因: Debian trixieでパッケージ名が変更された
+- 解決済み: `backend/Dockerfile`で`libgdk-pixbuf-2.0-0`を使用
+
+**問題: Supabase依存関係の競合**
+- エラー: `supabase 2.3.4 depends on httpx<0.26`
+- 原因: httpxバージョンの不一致
+- 解決済み: `requirements.txt`で`httpx>=0.24.0`, `supabase==2.16.0`を使用
+
+**問題: Supabaseに接続できない（DNS解決エラー）**
+- エラー: `[Errno -2] Name or service not known`
+- 原因: WSL2のDNS設定または社内ネットワーク制限
+- 影響: **なし** - ローカルDBと正規表現でサイズ抽出が正常に機能
+- 対処: そのまま使用可能（Supabaseはオプション機能）
+- 参考: `setup-device-master.sh/.bat` でローカルDBセットアップ済み
+
+**問題: 別のパソコンで機種抽出が動作しない**
+- 原因: `device_attributes` テーブルが未作成またはデータ未登録
+- 確認: `docker-compose exec db psql -U accusync -d accusync -c "SELECT COUNT(*) FROM device_attributes;"`
+- 解決: セットアップスクリプト実行
+  ```bash
+  # Linux/Mac
+  ./setup-device-master.sh
+
+  # Windows
+  setup-device-master.bat
+  ```
+- 期待結果: 96件のデバイスデータが登録される
+
+**問題: インポートプレビューで「サイズ情報が検出できませんでした」と表示される**
+- 原因: ハードケース商品でもエラーメッセージが表示されていた（仕様として正しいが誤解を招く）
+- 解決済み: フロントエンドで商品タイプに応じたメッセージに変更
+  - ハードケース：「サイズ対象外（ハードケース等）」
+  - 手帳型カバー未検出：「サイズ情報が検出できませんでした（手帳型のみサイズ対象）」
+- **重要**: サイズ抽出は手帳型カバーのみが対象（ハードケースは対象外）
+
+**問題: 楽天SKU管理システムDBに接続できない**
+- 原因: Docker環境でボリュームマウントが正しく設定されていない
+- 確認: `docker-compose exec api python -c "from pathlib import Path; print(Path('/external_data/csv_sku.k/inventory.db').exists())"`
+- 解決: `docker-compose.yml` にボリュームマウントが追加されているか確認
+  ```yaml
+  volumes:
+    - /mnt/c/Users/info/Desktop/sin/csv_sku.k/data:/external_data/csv_sku.k:ro
+  ```
+- 再起動: `docker-compose down && docker-compose up -d`
+
+**問題: 機械学習機能が動作しない（学習パターンが保存されない）**
+- 原因: `device_patterns` または `size_patterns` テーブルが未作成
+- 確認: `docker-compose exec db psql -U accusync -d accusync -c "\dt"`
+- 解決: マイグレーション実行
+  ```bash
+  docker-compose exec api alembic upgrade head
+  ```
+- 期待結果: `device_patterns` と `size_patterns` テーブルが存在する
+
 ### 商品・価格管理機能
 
 **商品マスタ管理** (`/api/v1/products`)
@@ -463,6 +812,82 @@ rule = PricingRule(
 - 例: "ハードケース(ボタニカル 青黄花柄)" → "ハードケース"
 - 例: "手帳型カバーmirror(刺繍風プリント)" → "手帳型カバー / mirror"
 
+### 商品タイプ機械学習機能
+
+**概要:**
+ユーザーが手動で変更した商品タイプのパターンを学習し、次回のインポート時に自動的に適用します。
+
+**学習API** (`POST /api/v1/product-types/learn`)
+```bash
+# 商品タイプの学習
+curl -X POST http://localhost:8100/api/v1/product-types/learn \
+  -H "Content-Type: application/json" \
+  -d '{
+    "product_name": "手帳型カバー/mirror(刺繍風プリント)",
+    "product_type": "手帳型カバー",
+    "source": "manual"
+  }'
+
+# レスポンス:
+# {
+#   "success": true,
+#   "message": "Pattern learned: 手帳型カバー → 手帳型カバー",
+#   "pattern": {
+#     "id": 1,
+#     "pattern": "手帳型カバー",
+#     "product_type": "手帳型カバー",
+#     "confidence": 0.9,
+#     "source": "manual",
+#     "usage_count": 1
+#   }
+# }
+```
+
+**予測API** (`POST /api/v1/product-types/predict`)
+```bash
+# 商品タイプの予測
+curl -X POST http://localhost:8100/api/v1/product-types/predict \
+  -H "Content-Type: application/json" \
+  -d '{"product_name": "手帳型カバー/rose(ローズ柄)"}'
+
+# レスポンス:
+# {
+#   "product_type": "手帳型カバー",
+#   "confidence": 0.9,
+#   "detection_method": "ml_manual"
+# }
+```
+
+**統計情報API** (`GET /api/v1/product-types/statistics`)
+```bash
+curl http://localhost:8100/api/v1/product-types/statistics
+
+# レスポンス:
+# {
+#   "total_patterns": 3,
+#   "manual_patterns": 3,
+#   "auto_patterns": 0,
+#   "total_usage": 7
+# }
+```
+
+**パターン管理:**
+- `GET /api/v1/product-types/patterns` - すべてのパターンを取得
+- `GET /api/v1/product-types/patterns/{product_type}` - 特定の商品タイプのパターンを取得
+- `DELETE /api/v1/product-types/patterns/{pattern_id}` - パターンを削除
+
+**動作の仕組み:**
+1. ユーザーが商品タイプを手動で変更
+2. システムが商品名からパターンを抽出（例: "手帳型カバー"）
+3. パターンと商品タイプの対応をDBに保存（confidence: 0.9）
+4. 次回インポート時、同じパターンが含まれる商品名があれば自動的に商品タイプを適用
+5. 使用回数がインクリメントされ、信頼度が徐々に上昇（最大1.0）
+
+**信頼度スコア:**
+- 手動学習: 0.9（ユーザーが明示的に設定）
+- 自動学習: 0.7（システムが自動判定）
+- 使用回数に応じて信頼度が上昇（+0.05/回）
+
 ### 列マッピング機能
 
 **マッピングテンプレート** (`/api/v1/mapping`)
@@ -477,6 +902,15 @@ rule = PricingRule(
 **マッピング表示の挙動:**
 - マッピング前: CSV元の列名を全て表示
 - マッピング後: マッピングされた列のみ表示（日本語ラベル + 元列名）
+
+**プレビュー表示の機種・サイズ情報:**
+- 📱 機種列: `detected_device` + `detected_brand` を表示
+  - 検出済み: 緑色背景、検出方法をツールチップに表示
+  - 未検出: 赤色背景、「機種情報が検出できませんでした」
+- 📏 サイズ列: `detected_size` を表示（**手帳型カバーのみ**）
+  - 検出済み: 青色背景、検出方法（正規表現/Supabase DB）をツールチップに表示
+  - 手帳型カバー未検出: グレー背景、「サイズ情報が検出できませんでした（手帳型のみサイズ対象）」
+  - ハードケース: グレー背景、「サイズ対象外（ハードケース等）」
 
 ### AI設定画面
 
@@ -493,6 +927,61 @@ rule = PricingRule(
 **注意:** AI設定は環境変数で管理（フロントエンドからの変更不可）
 
 ## 最近の主要な変更
+
+**2025-11-10: 楽天SKU管理システムDB統合と機械学習機能**
+- `RakutenSKUService` 実装（外部プロジェクト csv_sku.k のDB連携）
+- SKU番号・機種名からのサイズ抽出機能
+- デザイン番号からの商品タイプ抽出機能
+- `DeviceLearningService` 実装（機種の手動変更を学習）
+- `SizeLearningService` 実装（サイズの手動変更を学習）
+- `device_patterns` テーブル追加（機種学習パターン保存）
+- `size_patterns` テーブル追加（サイズ学習パターン保存）
+- Docker環境に外部DBボリュームマウント追加
+- Amazonひらがな表記対応強化（`_pre_normalize_text()`）
+- インポートプレビューに学習パターン予測機能統合
+- 信頼度スコアリングシステム（手動: 0.9、自動: 0.7）
+
+**2025-11-07: UI改善（サイズ列ツールチップ修正）**
+- インポートプレビュー画面のサイズ列ツールチップを商品タイプに応じて改善
+- ハードケース商品：「サイズ対象外（ハードケース等）」と表示
+- 手帳型カバー（未検出）：「サイズ情報が検出できませんでした（手帳型のみサイズ対象）」と表示
+- サイズ抽出が手帳型カバー専用であることを明確化し、誤解を防止
+
+**2025-11-07: 商品タイプ機械学習機能実装**
+- `product_type_patterns` テーブル追加（学習データ保存用）
+- ProductTypeLearningService実装（パターン学習・予測エンジン）
+- 商品タイプ学習API追加（`POST /api/v1/product-types/learn`）
+- 商品タイプ予測API追加（`POST /api/v1/product-types/predict`）
+- 統計情報API追加（`GET /api/v1/product-types/statistics`）
+- パターン管理API追加（GET/DELETE /api/v1/product-types/patterns）
+- ユーザーが手動変更した商品タイプを自動学習し、次回から適用
+- 信頼度スコアリング機能（手動: 0.9、自動: 0.7）
+- 使用回数によるパターン品質評価
+
+**2025-11-07: 多店舗フォーマット対応（機種抽出の強化）**
+- 選択肢列からの機種・サイズ抽出機能を追加（`extract_device_from_options()`）
+- 楽天形式のセパレーター対応拡張（`:` および `=` の両方をサポート）
+- ワーマ形式の選択肢パターンに対応（`機種の選択(ブランド)=機種名[サイズ]`）
+- 未選択項目（▼や-で始まる）の自動除外機能
+- ひらがな表記の機種名に対応（いふぉん、あくおす等）
+- 商品名からの正規化検出を強化（スペースなし、ひらがな、カタカナ）
+- スペース非依存のデバイス名正規化（`iPhone14Pro` ↔ `iPhone 14 Pro`）
+- 統合テスト実装（楽天/ワーマ/Amazon全フォーマット: 8/8成功）
+
+**2025-10-31: ポータビリティ対応（ネットワーク非依存化）**
+- ローカルPostgreSQLに`device_attributes`テーブルを追加
+- DeviceMasterService実装（ローカルDB優先、Supabaseはオプション）
+- 96機種のサイズ情報をローカルDBに格納
+- セットアップスクリプト作成（`setup-device-master.sh/.bat`）
+- SETUP_GUIDE.md作成（別パソコンでの起動手順）
+- 機種抽出・サイズ取得がネットワーク環境に依存しない構成に変更
+
+**2025-10-30: インフラ修正とSupabase統合**
+- Dockerfileのパッケージ名修正（`libgdk-pixbuf-2.0-0`）
+- Supabaseパッケージを2.16.0にアップグレード
+- httpx依存関係の競合を解決（`httpx>=0.24.0`）
+- Supabaseサービスの初期化を改善（接続失敗時の自動フォールバック）
+- サイズ抽出機能の動作確認完了（正規表現ベースで動作）
 
 **2025-10-30: 注文統計ページ実装**
 - 在庫管理用の5つの独立した統計ページを作成
@@ -567,12 +1056,72 @@ rule = PricingRule(
 | 📊 件数サマリー | http://localhost:3100/stats/count-summary | 件数の概要とトップ5 |
 | 🎯 個数サマリー | http://localhost:3100/stats/quantity-summary | 個数の概要とサイズ別トップ5 |
 
+**🏢 取引先会社フィルタ機能**
+
+サイドバーの「取引先会社」ドロップダウンで会社を選択すると、その会社の注文のみに絞り込めます：
+
+- ✅ **すべて**: 全会社の注文統計を表示
+- ✅ **Quest**: Questの注文のみを表示
+- ✅ **その他の会社**: 選択した会社の注文のみを表示
+
+**CSV取り込み時の取引先選択方法:**
+
+1. **データ取り込み画面**（http://localhost:3100/imports）でCSVファイルをアップロード
+2. **取引先会社を選択（オプション）**ドロップダウンを使用
+   - 「（CSVのデータから自動作成）」：CSV内の顧客情報から新規作成
+   - 既存の会社を選択（Quest等）：選択した会社で注文を登録
+3. インポート実行
+
+**使用例:**
+```
+Questの注文データをインポートする場合：
+1. CSVアップロード
+2. 「Quest（法人）」を選択
+3. マッピング設定してインポート実行
+→ 注文統計で「Quest」を選択すると、Questの注文のみ集計される
+```
+
 **統計ページの特徴:**
 - **共通サイドバー**: 全ページで統計データを共有し、ページ間の移動が容易
 - **件数 vs 個数の分離**: 注文件数（count）と商品個数（quantity）を明確に区別
 - **展開可能なサマリー**: サイドバーの個数サマリーでハードケース（機種別）・手帳ケース（サイズ別）をクリック展開
 - **リアルタイム更新**: データは一度だけフェッチされ、全ページで共有
 - **商品タイプ別**: ハードケース（機種ごと）、手帳ケース（種類別にサイズと機種で集計）
+
+**⚠️ 重要：在庫管理ロジック（手帳型カバーの構成）**
+
+手帳型カバーは**2つの部品**で構成されます：
+1. **手帳部分**（サイズ別）→ L, M, i6, 特大など
+2. **ハードケース部分**（機種別）→ iPhone 15 Pro, AQUOS wish4など
+
+**在庫計算式:**
+```
+手帳型カバー 1個 = 手帳サイズ部品 1個 + ハードケース部品 1個
+```
+
+**統計への反映:**
+- ✅ **純粋なハードケース商品** → ハードケース統計のみに加算
+- ✅ **手帳型カバー商品** → **手帳統計 + ハードケース統計の両方に加算**
+
+**具体例:**
+```
+注文: 手帳型カバー/キャメル iPhone 15 Pro サイズL × 5個
+
+必要な在庫:
+- サイズLの手帳部分: 5個
+- iPhone 15 Pro用ハードケース: 5個
+
+統計への反映:
+✅ 手帳サイズ「L」: +5個
+✅ ハードケース「iPhone 15 Pro」: +5個（手帳用部品として）
+```
+
+**ハードケース統計の内訳:**
+```
+ハードケース統計 = 純粋なハードケース注文 + 手帳型カバー用ハードケース部品
+```
+
+これにより、在庫管理で**実際に必要なハードケース部品の総数**が正確に把握できます。
 
 **データ構造:**
 ```typescript
@@ -601,6 +1150,179 @@ rule = PricingRule(
 - Shared layout with React Context for data sharing
 - TypeScript interfaces for type safety
 - Conditional null checks with early return pattern
+
+## ポータビリティのポイント
+
+### ✅ ネットワーク非依存の機能（別のパソコンでも動作）
+
+1. **機種抽出** - 正規表現パターンベース
+2. **サイズ取得** - ローカルDB（device_attributes）から取得
+3. **商品管理** - 全てローカルPostgreSQLで完結
+4. **注文処理** - 外部APIに依存しない
+
+### ⚠️ ネットワーク依存の機能（オプション）
+
+1. **AI機能** - OpenAI/Claude APIキーが必要
+   - 顧客タイプ判定
+   - データ品質チェック
+   - 自動マッピング
+   → `.env`でAPIキーを設定すれば利用可能
+
+2. **Supabaseクラウド** - 外部機種マスターDB
+   - ローカルDBで代替可能
+   - 影響なし
+
+### 📋 別パソコンでのセットアップチェックリスト
+
+- [ ] Docker Desktopがインストールされている
+- [ ] `.env`ファイルが作成されている
+- [ ] `docker-compose up -d`でサービスが起動
+- [ ] `setup-device-master.sh(.bat)`を実行済み
+- [ ] `http://localhost:3100`にアクセスできる
+- [ ] データベースに機種マスターデータが登録されている（96件）
+- [ ] テストCSVのインポートが成功する
+
+詳細は `SETUP_GUIDE.md` を参照してください。
+
+## 商品タイプ機械学習機能
+
+### 概要
+注文一覧画面で商品タイプを手動で変更すると、その変更内容を機械学習で自動的に学習します。
+次回の同じ商品パターンのインポート時に、学習した商品タイプを自動的に適用します。
+
+### データベース構造
+```sql
+CREATE TABLE product_type_patterns (
+    id SERIAL PRIMARY KEY,
+    pattern VARCHAR(255) NOT NULL,           -- 商品名から抽出したパターン
+    product_type VARCHAR(100) NOT NULL,      -- 商品タイプ
+    confidence FLOAT NOT NULL DEFAULT 1.0,   -- 信頼度（0.0-1.0）
+    source VARCHAR(50) NOT NULL,             -- 'manual' または 'auto'
+    usage_count INTEGER NOT NULL DEFAULT 0,  -- 使用回数
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### API エンドポイント
+
+**商品タイプ更新（学習付き）:**
+```bash
+# 注文明細の商品タイプを更新し、自動的に学習
+PUT /api/v1/orders/items/{order_item_id}/product-type
+{
+  "product_type": "手帳型カバー"
+}
+
+# レスポンス
+{
+  "success": true,
+  "message": "Product type updated and learned: 手帳型カバー/mirror → 手帳型カバー",
+  "order_item_id": 123,
+  "old_product_type": null,
+  "new_product_type": "手帳型カバー",
+  "learned_pattern": {
+    "pattern": "手帳型カバー",
+    "confidence": 0.9,
+    "usage_count": 1
+  }
+}
+```
+
+**パターン学習:**
+```bash
+POST /api/v1/product-types/learn
+{
+  "product_name": "手帳型カバー/mirror(刺繍風プリント)",
+  "product_type": "手帳型カバー",
+  "source": "manual"
+}
+```
+
+**商品タイプ予測:**
+```bash
+POST /api/v1/product-types/predict
+{
+  "product_name": "手帳型カバー/rose(ローズ柄)"
+}
+
+# レスポンス
+{
+  "product_type": "手帳型カバー",
+  "confidence": 0.95,
+  "detection_method": "ml_manual"
+}
+```
+
+**学習パターン一覧:**
+```bash
+GET /api/v1/product-types/patterns
+GET /api/v1/product-types/patterns/{product_type}
+DELETE /api/v1/product-types/patterns/{pattern_id}
+GET /api/v1/product-types/statistics
+```
+
+### 学習メカニズム
+
+1. **パターン抽出:**
+   - 商品名から特徴的なキーワードを抽出
+   - 商品タイプそのものをメインパターンとして保存
+
+2. **信頼度スコアリング:**
+   - 手動学習（manual）: 初期信頼度 0.9
+   - 自動学習（auto）: 初期信頼度 0.7
+   - 使用されるたびに信頼度が +0.05 増加（最大 1.0）
+
+3. **予測ロジック:**
+   - 商品名に含まれるパターンを部分一致で検索
+   - 最も信頼度が高いパターンを選択
+   - 使用回数をインクリメント
+
+4. **統計情報:**
+   - 総パターン数
+   - 手動学習 vs 自動学習パターン数
+   - 総使用回数
+
+### UI 使用方法
+
+1. 注文一覧ページ（`http://localhost:3100/orders`）を開く
+2. 商品タイプ列の「編集」ボタンをクリック
+3. 新しい商品タイプを入力
+4. 「保存」ボタンをクリック
+5. システムが自動的に学習し、成功メッセージを表示
+6. 学習結果（パターン、信頼度、使用回数）が表示される
+
+### 実装ファイル
+
+**バックエンド:**
+- `backend/app/models/product_type_pattern.py` - SQLAlchemyモデル
+- `backend/app/services/product_type_learning_service.py` - 学習サービス
+- `backend/app/api/v1/endpoints/product_types.py` - APIエンドポイント
+- `backend/app/api/v1/endpoints/orders.py` - 商品タイプ更新エンドポイント
+- `backend/alembic/versions/514c297c5ee1_add_product_type_patterns_table.py` - マイグレーション
+
+**フロントエンド:**
+- `frontend/app/orders/page.tsx` - 注文一覧ページ（編集UI）
+
+### テスト方法
+
+```bash
+# 学習テスト
+curl -X POST "http://localhost:8100/api/v1/product-types/learn" \
+  -H "Content-Type: application/json" \
+  -d '{"product_name":"手帳型カバー/mirror","product_type":"手帳型カバー","source":"manual"}'
+
+# 予測テスト
+curl -X POST "http://localhost:8100/api/v1/product-types/predict" \
+  -H "Content-Type: application/json" \
+  -d '{"product_name":"手帳型カバー/rose"}'
+
+# パターン一覧
+curl -X GET "http://localhost:8100/api/v1/product-types/patterns"
+
+# 統計情報
+curl -X GET "http://localhost:8100/api/v1/product-types/statistics"
+```
 
 ## 残りの開発タスク
 

@@ -15,16 +15,28 @@ router = APIRouter()
 
 
 @router.get("/orders/detailed")
-async def get_detailed_order_stats(db: Session = Depends(get_db)):
+async def get_detailed_order_stats(
+    db: Session = Depends(get_db),
+    customer_id: int = None
+):
     """
     詳細注文統計を取得（日付別データ含む）
     - ハードケース：機種ごとに日付別の注文数と総数
     - 手帳ケース：サイズ別と機種別の統計
+
+    Args:
+        customer_id: 取引先会社ID（指定すると特定の会社のみの統計）
     """
 
     # 全注文アイテムと注文情報を取得
     from app.models.order import Order
-    order_items = db.query(OrderItem, Order).join(Order).all()
+    query = db.query(OrderItem, Order).join(Order)
+
+    # 会社フィルタ
+    if customer_id:
+        query = query.filter(Order.customer_id == customer_id)
+
+    order_items = query.all()
 
     # 統計データの初期化
     hardcase_by_device: Dict[str, Dict] = {}  # {device: {count, quantity, by_date}}
@@ -59,7 +71,9 @@ async def get_detailed_order_stats(db: Session = Depends(get_db)):
             hardcase_by_device[device]["by_date"][order_date]["quantity"] += quantity  # 個数
 
         # 手帳ケースの場合：種類別にサイズ別・機種別にカウント
-        elif '手帳' in product_type or 'カバー' in product_type or 'mirror' in product_type:
+        # ⚠️ 重要: 手帳型カバーは「手帳サイズ + ハードケース」で構成されるため、
+        #         手帳統計とハードケース統計の両方に加算する
+        if '手帳' in product_type or 'カバー' in product_type or 'mirror' in product_type:
             # 手帳ケースの種類を判定（商品名から）
             notebook_type = "その他"
             for ntype in notebook_types:
@@ -88,6 +102,20 @@ async def get_detailed_order_stats(db: Session = Depends(get_db)):
                 notebook_stats_by_type[notebook_type]["device_stats"][device] = {"count": 0, "quantity": 0}
             notebook_stats_by_type[notebook_type]["device_stats"][device]["count"] += 1  # 件数
             notebook_stats_by_type[notebook_type]["device_stats"][device]["quantity"] += quantity  # 個数
+
+            # ⚠️ 在庫管理用: 手帳型カバーはハードケース部品も必要なため、
+            #    ハードケース統計にも同じ数量を加算する
+            if device and device != "不明":
+                if device not in hardcase_by_device:
+                    hardcase_by_device[device] = {"count": 0, "quantity": 0, "by_date": {}}
+
+                hardcase_by_device[device]["count"] += 1  # 件数
+                hardcase_by_device[device]["quantity"] += quantity  # 個数（手帳用ハードケース部品）
+
+                if order_date not in hardcase_by_device[device]["by_date"]:
+                    hardcase_by_device[device]["by_date"][order_date] = {"count": 0, "quantity": 0}
+                hardcase_by_device[device]["by_date"][order_date]["count"] += 1
+                hardcase_by_device[device]["by_date"][order_date]["quantity"] += quantity
 
     # データがない場合はサンプルデータを返す
     if total_orders == 0:
@@ -206,15 +234,28 @@ async def get_detailed_order_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/orders/summary")
-async def get_order_summary(db: Session = Depends(get_db)):
+async def get_order_summary(
+    db: Session = Depends(get_db),
+    customer_id: int = None
+):
     """
     注文統計サマリーを取得
     - ハードケース：機種別の注文数
     - 手帳ケース：サイズ別の注文数
+
+    Args:
+        customer_id: 取引先会社ID（指定すると特定の会社のみの統計）
     """
 
     # 全注文アイテムを取得
-    order_items = db.query(OrderItem).join(Product).all()
+    from app.models.order import Order
+    query = db.query(OrderItem).join(Product).join(Order)
+
+    # 会社フィルタ
+    if customer_id:
+        query = query.filter(Order.customer_id == customer_id)
+
+    order_items = query.all()
 
     # 統計データの初期化
     hardcase_by_device: Dict[str, int] = {}
@@ -236,15 +277,22 @@ async def get_order_summary(db: Session = Depends(get_db)):
             hardcase_by_device[device] = hardcase_by_device.get(device, 0) + quantity
 
         # 手帳ケースの場合：サイズ別 AND 機種別にカウント
-        elif '手帳' in product_type or 'カバー' in product_type or 'mirror' in product_type:
+        # ⚠️ 重要: 手帳型カバーは「手帳サイズ + ハードケース」で構成されるため、
+        #         手帳統計とハードケース統計の両方に加算する
+        if '手帳' in product_type or 'カバー' in product_type or 'mirror' in product_type:
             # サイズ別カウント
             size = item.size_info or "-"
             if size and size != '-':
                 notebook_by_size[size] = notebook_by_size.get(size, 0) + quantity
 
-            # 機種別カウント
+            # 機種別カウント（手帳統計用）
             device = item.device_info or "不明"
             notebook_by_device[device] = notebook_by_device.get(device, 0) + quantity
+
+            # ⚠️ 在庫管理用: 手帳型カバーはハードケース部品も必要なため、
+            #    ハードケース統計にも同じ数量を加算する
+            if device and device != "不明":
+                hardcase_by_device[device] = hardcase_by_device.get(device, 0) + quantity
 
     # データがない場合はサンプルデータを返す
     if total_orders == 0:

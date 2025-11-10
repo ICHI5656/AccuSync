@@ -78,6 +78,7 @@ interface UploadedFile {
   selectedIssuerId?: number
   selectedCustomerId?: number
   hasSavedTemplate?: boolean  // 保存済みテンプレートから読み込んだかどうか
+  useAiMapping?: boolean  // AIマッピングを使用するかどうか
 }
 
 export default function ImportsPage() {
@@ -93,6 +94,7 @@ export default function ImportsPage() {
   const [priceModal, setPriceModal] = useState<PriceModalData | null>(null)
   const [selectedProduct, setSelectedProduct] = useState<number | null>(null)
   const [priceInput, setPriceInput] = useState('')
+  const [editingProductType, setEditingProductType] = useState('')
 
   // 請求者一覧を取得
   useEffect(() => {
@@ -288,9 +290,20 @@ export default function ImportsPage() {
   // 価格モーダルが開かれた時に既存価格を読み込む
   useEffect(() => {
     if (priceModal && priceModal.customerId && priceModal.extractedKeyword) {
+      console.log('🔧 Debug: Modal opened', {
+        customerId: priceModal.customerId,
+        extractedKeyword: priceModal.extractedKeyword,
+        fileIndex: priceModal.fileIndex,
+        rowIndex: priceModal.rowIndex
+      })
+
+      // 商品タイプを初期化
+      setEditingProductType(priceModal.extractedKeyword)
+
       fetchExistingPrice(priceModal.customerId, priceModal.extractedKeyword).then(price => {
         if (price) {
           setPriceInput(price)
+          console.log('💰 Debug: Existing price loaded:', price)
         }
       })
     }
@@ -300,7 +313,8 @@ export default function ImportsPage() {
     const newFiles = acceptedFiles.map(file => ({
       file,
       status: 'pending' as const,
-      selectedIssuerId: defaultIssuerId || undefined
+      selectedIssuerId: defaultIssuerId || undefined,
+      useAiMapping: false  // デフォルトはAIを使用しない（手動マッピング）
     }))
     setFiles(prev => [...prev, ...newFiles])
   }, [defaultIssuerId])
@@ -386,8 +400,8 @@ export default function ImportsPage() {
           if (customerMapping && Object.keys(customerMapping).length > 0) {
             columnMapping = customerMapping
             hasSavedTemplate = true
-          } else {
-            // テンプレートがない場合は自動マッピング
+          } else if (fileData.useAiMapping) {
+            // テンプレートがなく、AIマッピングがONの場合のみ自動マッピング
             const mappingResponse = await fetch('http://localhost:8100/api/v1/imports/mapping/suggest', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -396,8 +410,8 @@ export default function ImportsPage() {
             const mappingData = await mappingResponse.json()
             columnMapping = mappingData.mapping || {}
           }
-        } else {
-          // 2. 顧客未選択の場合、まず自動マッピング提案を取得
+        } else if (fileData.useAiMapping) {
+          // 2. 顧客未選択で、AIマッピングがONの場合のみ自動マッピング提案を取得
           const mappingResponse = await fetch('http://localhost:8100/api/v1/imports/mapping/suggest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -474,8 +488,8 @@ export default function ImportsPage() {
           upload_id: fileData.uploadId,
           filename: fileData.file.name,
           file_type: fileType,
-          apply_ai_mapping: true,
-          apply_quality_check: true
+          apply_ai_mapping: fileData.useAiMapping || false,
+          apply_quality_check: fileData.useAiMapping || false  // AIマッピングと連動
         })
       })
 
@@ -650,6 +664,12 @@ export default function ImportsPage() {
 
   // 価格ルールを保存
   const savePricingRule = async () => {
+    console.log('🚀 Debug: savePricingRule called', {
+      priceModal,
+      priceInput,
+      editingProductType
+    })
+
     if (!priceModal || !priceInput) {
       alert('価格を入力してください')
       return
@@ -660,59 +680,133 @@ export default function ImportsPage() {
       return
     }
 
-    if (!priceModal.extractedKeyword) {
+    if (!editingProductType || editingProductType.trim() === '') {
       alert('商品タイプが取得できませんでした')
       return
     }
 
+    console.log('✅ Debug: All validations passed, proceeding with save')
+
     try {
+      // 商品タイプが変更された場合、学習APIで学習
+      if (editingProductType !== priceModal.extractedKeyword) {
+        const learnResponse = await fetch('http://localhost:8100/api/v1/product-types/learn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product_name: priceModal.extractedKeyword,
+            product_type: editingProductType,
+            source: 'manual'
+          })
+        })
+
+        if (!learnResponse.ok) {
+          console.error('Failed to learn product type')
+        }
+      }
+
+      // 価格ルールを保存（編集後の商品タイプを使用）
       const response = await fetch('http://localhost:8100/api/v1/products/pricing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customer_id: priceModal.customerId,
-          product_type_keyword: priceModal.extractedKeyword,
+          product_type_keyword: editingProductType,
           price: parseFloat(priceInput),
           priority: 0
         })
       })
 
       if (response.ok) {
-        alert(`価格ルールを保存しました\n商品タイプ: ${priceModal.extractedKeyword}\n価格: ¥${priceInput}`)
+        let message = `価格ルールを保存しました\n商品タイプ: ${editingProductType}\n価格: ¥${priceInput}`
+        if (editingProductType !== priceModal.extractedKeyword) {
+          message += `\n\n✅ 商品タイプを学習しました。次回から「${priceModal.extractedKeyword}」→「${editingProductType}」が自動適用されます。`
+        }
+        alert(message)
 
-        // プレビューデータの単価を更新
+        // プレビューデータの単価と商品タイプを更新
         const fileIndex = priceModal.fileIndex
         const newPrice = priceInput
-        const keyword = priceModal.extractedKeyword
+        const originalKeyword = priceModal.extractedKeyword
+        const newKeyword = editingProductType
 
-        setFiles(prev => prev.map((f, i) => {
-          if (i !== fileIndex || !f.previewData || !f.columnMapping) return f
+        console.log('🔧 Debug: Updating preview data', {
+          fileIndex,
+          originalKeyword,
+          newKeyword,
+          newPrice
+        })
 
-          // 単価列を特定
-          const unitPriceCol = Object.entries(f.columnMapping).find(([key]) => key === 'unit_price')?.[1]
-
-          if (!unitPriceCol) return f
-
-          // extracted_memoが一致する行の単価を更新
-          const updatedData = f.previewData.data.map((row: any) => {
-            if (row['extracted_memo'] === keyword) {
-              return { ...row, [unitPriceCol]: newPrice }
-            }
-            return row
+        setFiles(prev => {
+          console.log('📂 Debug: Current files state', {
+            filesCount: prev.length,
+            targetFileIndex: fileIndex,
+            targetFile: prev[fileIndex] ? {
+              hasPreviewData: !!prev[fileIndex].previewData,
+              rowsCount: prev[fileIndex].previewData?.data?.length
+            } : null
           })
 
-          return {
-            ...f,
-            previewData: {
-              ...f.previewData,
-              data: updatedData
-            }
+          // 全ての extracted_memo 値を出力してデバッグ
+          if (prev[fileIndex]?.previewData?.data) {
+            const allMemos = prev[fileIndex].previewData.data.map((r: any) => r['extracted_memo'])
+            console.log('📋 Debug: All extracted_memo values in target file:', allMemos)
+            console.log('🔍 Debug: Looking for originalKeyword:', originalKeyword)
+            console.log('🔍 Debug: Matching rows:', allMemos.filter((m: string) => m === originalKeyword).length)
           }
-        }))
+
+          return prev.map((f, i) => {
+            if (i !== fileIndex || !f.previewData || !f.columnMapping) return f
+
+            // 単価列を特定
+            const unitPriceCol = Object.entries(f.columnMapping).find(([key]) => key === 'unit_price')?.[1]
+
+            if (!unitPriceCol) {
+              console.log('⚠️ Debug: unitPriceCol not found')
+              return f
+            }
+
+            console.log('📊 Debug: Before update, total rows:', f.previewData.data.length)
+
+            // extracted_memoが一致する行の単価と商品タイプを更新
+            const updatedData = f.previewData.data.map((row: any) => {
+              if (row['extracted_memo'] === originalKeyword) {
+                console.log('✅ Debug: Updating row', {
+                  oldMemo: row['extracted_memo'],
+                  newMemo: newKeyword,
+                  oldPrice: row[unitPriceCol],
+                  newPrice
+                })
+                return {
+                  ...row,
+                  [unitPriceCol]: newPrice,
+                  'extracted_memo': newKeyword // 商品タイプも更新
+                }
+              }
+              return row
+            })
+
+            console.log('📊 Debug: After update, updated rows count:',
+              updatedData.filter((r: any) => r['extracted_memo'] === newKeyword).length)
+
+            return {
+              ...f,
+              previewData: {
+                ...f.previewData,
+                data: updatedData
+              }
+            }
+          })
+        })
+
+        console.log('✅ Debug: State update completed, closing modal')
 
         setPriceModal(null)
         setSelectedProduct(null)
         setPriceInput('')
+        setEditingProductType('')
+
+        console.log('🔒 Debug: Modal closed')
       } else {
         const error = await response.json()
         alert(`保存に失敗しました: ${error.detail || '不明なエラー'}`)
@@ -901,6 +995,37 @@ export default function ImportsPage() {
                     月ごとにまとめて請求する場合、ここで会社を選択してください。<br/>
                     選択しない場合は、CSVの顧客名から自動で会社を作成します。
                   </p>
+                </div>
+
+                {/* AI Mapping Toggle */}
+                <div className="mb-4 bg-purple-50 rounded-lg p-4 border-2 border-purple-200">
+                  <label className="flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={fileData.useAiMapping || false}
+                      onChange={(e) => {
+                        setFiles(prev => prev.map((f, i) =>
+                          i === index ? { ...f, useAiMapping: e.target.checked } : f
+                        ))
+                      }}
+                      className="w-5 h-5 text-purple-600 border-gray-300 rounded focus:ring-purple-500 focus:ring-2 mr-3"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-ink">
+                        AIマッピングを使用する
+                      </span>
+                      <p className="text-xs text-muted mt-1">
+                        {fileData.useAiMapping
+                          ? '🤖 AIがCSVの列名を自動で判別してマッピングします'
+                          : '✋ 手動で列マッピングを設定します（AIを使用しません）'}
+                      </p>
+                      {!fileData.useAiMapping && (
+                        <p className="text-xs text-purple-700 mt-1 font-medium">
+                          💡 プレビュー後、「列マッピング設定」ボタンから手動でマッピングしてください
+                        </p>
+                      )}
+                    </div>
+                  </label>
                 </div>
 
                 {/* Action Buttons */}
@@ -1104,6 +1229,36 @@ export default function ImportsPage() {
                                   )
                                 }
 
+                                // detected_brandを追加
+                                if (fileData.previewData.columns.includes('detected_brand')) {
+                                  columns.push(
+                                    <th key="detected_brand" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-orange-100 text-orange-800">
+                                      🏷️ ブランド<br/>
+                                      <span className="text-xs font-normal">（自動検出）</span>
+                                    </th>
+                                  )
+                                }
+
+                                // detected_deviceを追加
+                                if (fileData.previewData.columns.includes('detected_device')) {
+                                  columns.push(
+                                    <th key="detected_device" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-green-100 text-green-800">
+                                      📱 機種<br/>
+                                      <span className="text-xs font-normal">（自動検出）</span>
+                                    </th>
+                                  )
+                                }
+
+                                // detected_sizeを追加
+                                if (fileData.previewData.columns.includes('detected_size')) {
+                                  columns.push(
+                                    <th key="detected_size" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-blue-100 text-blue-800">
+                                      📏 サイズ<br/>
+                                      <span className="text-xs font-normal">（自動検出）</span>
+                                    </th>
+                                  )
+                                }
+
                                 // 優先フィールドのみを表示
                                 priorityFields.forEach((fieldKey) => {
                                   const sourceCol = fileData.columnMapping[fieldKey]
@@ -1124,13 +1279,45 @@ export default function ImportsPage() {
                               } else {
                                 // マッピング前：元のCSV列名を全て表示
                                 const extractedMemoIndex = fileData.previewData.columns.indexOf('extracted_memo')
-                                const otherColumns = fileData.previewData.columns.filter((c: string) => c !== 'extracted_memo')
+                                const detectedBrandIndex = fileData.previewData.columns.indexOf('detected_brand')
+                                const detectedDeviceIndex = fileData.previewData.columns.indexOf('detected_device')
+                                const detectedSizeIndex = fileData.previewData.columns.indexOf('detected_size')
+                                const otherColumns = fileData.previewData.columns.filter((c: string) =>
+                                  c !== 'extracted_memo' && c !== 'detected_brand' && c !== 'detected_device' && c !== 'detected_size'
+                                )
 
                                 if (extractedMemoIndex !== -1) {
                                   columns.push(
                                     <th key="extracted_memo" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-purple-100 text-purple-800 cursor-help">
                                       📝 商品タイプ<br/>
                                       <span className="text-xs font-normal">（価格設定）</span>
+                                    </th>
+                                  )
+                                }
+
+                                if (detectedBrandIndex !== -1) {
+                                  columns.push(
+                                    <th key="detected_brand" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-orange-100 text-orange-800">
+                                      🏷️ ブランド<br/>
+                                      <span className="text-xs font-normal">（自動検出）</span>
+                                    </th>
+                                  )
+                                }
+
+                                if (detectedDeviceIndex !== -1) {
+                                  columns.push(
+                                    <th key="detected_device" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-green-100 text-green-800">
+                                      📱 機種<br/>
+                                      <span className="text-xs font-normal">（自動検出）</span>
+                                    </th>
+                                  )
+                                }
+
+                                if (detectedSizeIndex !== -1) {
+                                  columns.push(
+                                    <th key="detected_size" className="px-3 py-2 text-left font-medium border-r border-line whitespace-nowrap sticky top-0 bg-blue-100 text-blue-800">
+                                      📏 サイズ<br/>
+                                      <span className="text-xs font-normal">（自動検出）</span>
                                     </th>
                                   )
                                 }
@@ -1179,6 +1366,79 @@ export default function ImportsPage() {
                                       )
                                     }
 
+                                    // detected_brandを追加
+                                    if (fileData.previewData.columns.includes('detected_brand')) {
+                                      const brand = row['detected_brand']
+                                      const isDetected = brand && brand !== '未検出'
+                                      cells.push(
+                                        <td
+                                          key="detected_brand"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            isDetected
+                                              ? 'bg-orange-50 text-orange-700'
+                                              : 'bg-gray-50 text-gray-500'
+                                          }`}
+                                          title={isDetected ? `ブランド: ${brand}` : 'ブランド情報が検出できませんでした'}
+                                        >
+                                          {isDetected ? `🏷️ ${brand}` : '-'}
+                                        </td>
+                                      )
+                                    }
+
+                                    // detected_deviceを追加
+                                    if (fileData.previewData.columns.includes('detected_device')) {
+                                      const device = row['detected_device']
+                                      const isDetected = device && device !== '未検出'
+                                      const method = row['device_detection_method'] || ''
+                                      const methodLabel = method.includes('supabase') ? '📊 Supabase DB' : '🔍 正規表現'
+                                      cells.push(
+                                        <td
+                                          key="detected_device"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            isDetected
+                                              ? 'bg-green-50 text-green-700'
+                                              : 'bg-red-50 text-red-600'
+                                          }`}
+                                          title={isDetected ? `${methodLabel} | 検出方法: ${method}` : '機種情報が検出できませんでした'}
+                                        >
+                                          {isDetected ? `📱 ${device}` : '❌ 未検出'}
+                                        </td>
+                                      )
+                                    }
+
+                                    // detected_sizeを追加
+                                    if (fileData.previewData.columns.includes('detected_size')) {
+                                      const size = row['detected_size']
+                                      const isDetected = size && size !== '未検出' && size !== '-'
+                                      const sizeMethod = row['size_detection_method'] || ''
+                                      const sizeMethodLabel = sizeMethod === 'supabase_db' ? '📊 Supabase DB' : sizeMethod === 'regex' ? '🔍 正規表現' : ''
+
+                                      // 商品タイプを取得して手帳型カバーかどうか判定
+                                      const productType = row['extracted_memo'] || ''
+                                      const isNotebookType = productType.includes('手帳') || productType.includes('カバー') || productType.includes('mirror')
+
+                                      // ツールチップメッセージを商品タイプに応じて変更
+                                      const sizeTooltip = isDetected
+                                        ? `${sizeMethodLabel} | サイズ: ${size}`
+                                        : isNotebookType
+                                          ? 'サイズ情報が検出できませんでした（手帳型のみサイズ対象）'
+                                          : 'サイズ対象外（ハードケース等）'
+
+                                      cells.push(
+                                        <td
+                                          key="detected_size"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            isDetected
+                                              ? 'bg-blue-50 text-blue-700'
+                                              : 'bg-gray-50 text-gray-500'
+                                          }`}
+                                          title={sizeTooltip}
+                                        >
+                                          {isDetected ? `📏 ${size}` : '-'}
+                                        </td>
+                                      )
+                                    }
+
                                     // 優先フィールドのみを表示
                                     priorityFields.forEach((fieldKey) => {
                                       const sourceCol = fileData.columnMapping[fieldKey]
@@ -1201,7 +1461,12 @@ export default function ImportsPage() {
                                   } else {
                                     // マッピング前：全列表示
                                     const extractedMemoIndex = fileData.previewData.columns.indexOf('extracted_memo')
-                                    const otherColumns = fileData.previewData.columns.filter((c: string) => c !== 'extracted_memo')
+                                    const detectedBrandIndex = fileData.previewData.columns.indexOf('detected_brand')
+                                    const detectedDeviceIndex = fileData.previewData.columns.indexOf('detected_device')
+                                    const detectedSizeIndex = fileData.previewData.columns.indexOf('detected_size')
+                                    const otherColumns = fileData.previewData.columns.filter((c: string) =>
+                                      c !== 'extracted_memo' && c !== 'detected_brand' && c !== 'detected_device' && c !== 'detected_size'
+                                    )
 
                                     if (extractedMemoIndex !== -1) {
                                       cells.push(
@@ -1217,6 +1482,76 @@ export default function ImportsPage() {
                                           title="クリックして価格を設定"
                                         >
                                           {row['extracted_memo'] || '-'}
+                                        </td>
+                                      )
+                                    }
+
+                                    if (detectedBrandIndex !== -1) {
+                                      const brand = row['detected_brand']
+                                      const isDetected = brand && brand !== '未検出'
+                                      cells.push(
+                                        <td
+                                          key="detected_brand"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            isDetected
+                                              ? 'bg-orange-50 text-orange-700'
+                                              : 'bg-gray-50 text-gray-500'
+                                          }`}
+                                          title={isDetected ? `ブランド: ${brand}` : 'ブランド情報が検出できませんでした'}
+                                        >
+                                          {isDetected ? `🏷️ ${brand}` : '-'}
+                                        </td>
+                                      )
+                                    }
+
+                                    if (detectedDeviceIndex !== -1) {
+                                      const device = row['detected_device']
+                                      const isDetected = device && device !== '未検出'
+                                      const method = row['device_detection_method'] || ''
+                                      const methodLabel = method.includes('supabase') ? '📊 Supabase DB' : '🔍 正規表現'
+                                      cells.push(
+                                        <td
+                                          key="detected_device"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            isDetected
+                                              ? 'bg-green-50 text-green-700'
+                                              : 'bg-red-50 text-red-600'
+                                          }`}
+                                          title={isDetected ? `${methodLabel} | 検出方法: ${method}` : '機種情報が検出できませんでした'}
+                                        >
+                                          {isDetected ? `📱 ${device}` : '❌ 未検出'}
+                                        </td>
+                                      )
+                                    }
+
+                                    if (detectedSizeIndex !== -1) {
+                                      const size = row['detected_size']
+                                      const isDetected = size && size !== '未検出' && size !== '-'
+                                      const sizeMethod = row['size_detection_method'] || ''
+                                      const sizeMethodLabel = sizeMethod === 'supabase_db' ? '📊 Supabase DB' : sizeMethod === 'regex' ? '🔍 正規表現' : ''
+
+                                      // 商品タイプを取得して手帳型カバーかどうか判定
+                                      const productType = row['extracted_memo'] || ''
+                                      const isNotebookType = productType.includes('手帳') || productType.includes('カバー') || productType.includes('mirror')
+
+                                      // ツールチップメッセージを商品タイプに応じて変更
+                                      const sizeTooltip = isDetected
+                                        ? `${sizeMethodLabel} | サイズ: ${size}`
+                                        : isNotebookType
+                                          ? 'サイズ情報が検出できませんでした（手帳型のみサイズ対象）'
+                                          : 'サイズ対象外（ハードケース等）'
+
+                                      cells.push(
+                                        <td
+                                          key="detected_size"
+                                          className={`px-3 py-2 border-r border-line whitespace-nowrap font-medium ${
+                                            isDetected
+                                              ? 'bg-blue-50 text-blue-700'
+                                              : 'bg-gray-50 text-gray-500'
+                                          }`}
+                                          title={sizeTooltip}
+                                        >
+                                          {isDetected ? `📏 ${size}` : '-'}
                                         </td>
                                       )
                                     }
@@ -1277,6 +1612,7 @@ export default function ImportsPage() {
                     setPriceModal(null)
                     setSelectedProduct(null)
                     setPriceInput('')
+                    setEditingProductType('')
                   }}
                   className="text-gray-400 hover:text-gray-600"
                 >
@@ -1287,10 +1623,19 @@ export default function ImportsPage() {
               </div>
 
               <div className="mb-4 p-4 bg-purple-50 border-2 border-purple-300 rounded-lg">
-                <p className="text-sm text-gray-600 mb-1">商品タイプ</p>
-                <p className="text-xl font-bold text-purple-700">{priceModal.extractedKeyword}</p>
+                <label className="block text-sm text-gray-600 mb-2">
+                  商品タイプ
+                  <span className="text-xs text-gray-500 ml-2">（編集可能 - 変更すると次回から自動適用されます）</span>
+                </label>
+                <input
+                  type="text"
+                  value={editingProductType}
+                  onChange={(e) => setEditingProductType(e.target.value)}
+                  className="w-full px-3 py-2 text-lg font-bold text-purple-700 bg-white border-2 border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="商品タイプを入力..."
+                />
                 <p className="text-xs text-gray-500 mt-2">
-                  このタイプの全ての商品（デザイン違いを含む）に同じ価格が適用されます
+                  💡 このタイプの全ての商品（デザイン違いを含む）に同じ価格が適用されます
                 </p>
               </div>
 
@@ -1316,11 +1661,17 @@ export default function ImportsPage() {
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                 <p className="text-xs text-blue-700">
-                  💡 この取引先に対して、「{priceModal.extractedKeyword}」タイプ全般の価格を設定します。<br/>
+                  💡 この取引先に対して、「{editingProductType}」タイプ全般の価格を設定します。<br/>
                   次回のインポート時、この取引先の同じタイプの商品に対して自動的にこの価格が適用されます。<br/>
                   <span className="font-semibold mt-1 block">
                     例: 「ハードケース」で¥1,200を設定すると、デザイン違いの全てのハードケースに¥1,200が適用されます
                   </span>
+                  {editingProductType !== priceModal.extractedKeyword && (
+                    <span className="font-semibold mt-2 block text-purple-700">
+                      ✏️ 商品タイプを変更しました: 「{priceModal.extractedKeyword}」→「{editingProductType}」<br/>
+                      保存すると、次回から自動的に適用されます。
+                    </span>
+                  )}
                 </p>
               </div>
 
@@ -1330,13 +1681,21 @@ export default function ImportsPage() {
                     setPriceModal(null)
                     setSelectedProduct(null)
                     setPriceInput('')
+                    setEditingProductType('')
                   }}
                   className="flex-1 px-4 py-2 border border-line rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   キャンセル
                 </button>
                 <button
-                  onClick={savePricingRule}
+                  onClick={() => {
+                    console.log('🔘 Debug: Save button clicked', {
+                      customerId: priceModal?.customerId,
+                      priceInput,
+                      editingProductType
+                    })
+                    savePricingRule()
+                  }}
                   disabled={!priceModal.customerId || !priceInput}
                   className="flex-1 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >

@@ -38,6 +38,8 @@ export default function PricingMatrixPage() {
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([])
   const [priceMatrix, setPriceMatrix] = useState<{[key: string]: PriceCell}>({})
   const [loading, setLoading] = useState(true)
+  const [editingProductType, setEditingProductType] = useState<{[key: number]: string}>({})
+  const [editingProductTypeMode, setEditingProductTypeMode] = useState<{[key: number]: boolean}>({})
 
   useEffect(() => {
     loadData()
@@ -157,6 +159,72 @@ export default function PricingMatrixPage() {
     }
   }
 
+  const startEditingProductType = (productId: number, currentName: string) => {
+    setEditingProductTypeMode(prev => ({ ...prev, [productId]: true }))
+    setEditingProductType(prev => ({ ...prev, [productId]: currentName }))
+  }
+
+  const cancelEditingProductType = (productId: number) => {
+    setEditingProductTypeMode(prev => ({ ...prev, [productId]: false }))
+    setEditingProductType(prev => ({ ...prev, [productId]: '' }))
+  }
+
+  const saveProductType = async (product: Product) => {
+    const newProductType = editingProductType[product.id]
+
+    if (!newProductType || newProductType.trim() === '') {
+      alert('商品タイプを入力してください')
+      return
+    }
+
+    if (newProductType === product.name) {
+      // 変更がない場合は編集モード解除のみ
+      cancelEditingProductType(product.id)
+      return
+    }
+
+    try {
+      // 1. 商品タイプ学習APIで学習させる
+      const learnResponse = await fetch('http://localhost:8100/api/v1/product-types/learn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_name: product.name,
+          product_type: newProductType,
+          source: 'manual'
+        })
+      })
+
+      if (!learnResponse.ok) {
+        throw new Error('商品タイプの学習に失敗しました')
+      }
+
+      // 2. 商品マスタの商品名を更新
+      const updateResponse = await fetch(`http://localhost:8100/api/v1/products/${product.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sku: product.sku,
+          name: newProductType,
+          default_price: parseFloat(product.default_price)
+        })
+      })
+
+      if (!updateResponse.ok) {
+        throw new Error('商品情報の更新に失敗しました')
+      }
+
+      alert('商品タイプを更新し、学習しました。次回から適用されます。')
+
+      // 編集モード解除とデータリロード
+      cancelEditingProductType(product.id)
+      loadData()
+    } catch (error) {
+      console.error('Failed to save product type:', error)
+      alert(`保存に失敗: ${error}`)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -192,6 +260,9 @@ export default function PricingMatrixPage() {
             <p className="text-sm text-muted">
               各セルをクリックして価格を入力し、「保存」ボタンで確定します
             </p>
+            <p className="text-sm text-muted mt-1">
+              💡 商品タイプ列の「✏️ 編集」ボタンで商品タイプを変更できます。変更すると自動的に学習され、次回のインポートから適用されます。
+            </p>
           </div>
 
           {/* 価格マトリクステーブル */}
@@ -217,11 +288,48 @@ export default function PricingMatrixPage() {
               <tbody>
                 {products.map((product) => (
                   <tr key={product.id} className="border-t border-line hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-ink border-r border-line sticky left-0 bg-white whitespace-nowrap">
-                      {product.name}
-                      <div className="text-xs text-muted mt-1">
-                        標準: ¥{parseFloat(product.default_price).toLocaleString()}
-                      </div>
+                    <td className="px-4 py-3 font-medium text-ink border-r border-line sticky left-0 bg-white">
+                      {editingProductTypeMode[product.id] ? (
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="text"
+                            value={editingProductType[product.id] || product.name}
+                            onChange={(e) => setEditingProductType(prev => ({ ...prev, [product.id]: e.target.value }))}
+                            className="px-2 py-1 text-sm border border-line rounded focus:outline-none focus:ring-2 focus:ring-accent"
+                            placeholder="商品タイプ"
+                          />
+                          <button
+                            onClick={() => saveProductType(product)}
+                            className="px-2 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+                            title="保存して学習"
+                          >
+                            保存
+                          </button>
+                          <button
+                            onClick={() => cancelEditingProductType(product.id)}
+                            className="px-2 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+                            title="キャンセル"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="whitespace-nowrap">{product.name}</div>
+                            <div className="text-xs text-muted mt-1">
+                              標準: ¥{parseFloat(product.default_price).toLocaleString()}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => startEditingProductType(product.id, product.name)}
+                            className="ml-2 px-2 py-1 text-xs border border-line rounded hover:bg-gray-100 transition-colors"
+                            title="商品タイプを編集"
+                          >
+                            ✏️ 編集
+                          </button>
+                        </div>
+                      )}
                     </td>
                     {customers.map((customer) => {
                       const cell = getPrice(customer.id, product.name)

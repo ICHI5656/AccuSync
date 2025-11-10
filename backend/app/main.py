@@ -93,11 +93,21 @@ from app.api.v1.endpoints import products
 from app.api.v1.endpoints import pricing_rules
 from app.api.v1.endpoints import customers
 from app.api.v1.endpoints import stats
+from app.api.v1.endpoints import invoices
+from app.api.v1.endpoints import auto_invoice
+from app.api.v1.endpoints import product_types
+from app.api.v1.endpoints import design_master
 
 app.include_router(
     imports.router,
     prefix="/api/v1/imports",
     tags=["imports"]
+)
+
+app.include_router(
+    design_master.router,
+    prefix="/api/v1/design-master",
+    tags=["design-master"]
 )
 
 app.include_router(
@@ -137,11 +147,28 @@ app.include_router(
 )
 
 app.include_router(
+    invoices.router,
+    prefix="/api/v1/invoices",
+    tags=["invoices"]
+)
+
+app.include_router(
+    auto_invoice.router,
+    prefix="/api/v1/auto-invoice",
+    tags=["auto-invoice"]
+)
+
+app.include_router(
     stats.router,
     prefix="/api/v1/stats",
     tags=["stats"]
 )
 
+app.include_router(
+    product_types.router,
+    prefix="/api/v1/product-types",
+    tags=["product-types"]
+)
 # TODO: Add more routers when implemented
 # from app.api.v1 import auth, orders, invoices, products, customers
 # app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
