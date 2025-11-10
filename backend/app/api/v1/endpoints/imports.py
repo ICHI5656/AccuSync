@@ -22,9 +22,11 @@ from app.ai.factory import AIProviderFactory
 from app.tasks.import_tasks import process_file_import
 from app.services.import_service import ImportService
 from app.services.device_detection_service import DeviceDetectionService
+from app.services.device_master_service import DeviceMasterService
 from app.services.product_type_learning_service import ProductTypeLearningService
 from app.services.device_learning_service import DeviceLearningService
 from app.services.size_learning_service import SizeLearningService
+from app.services.rakuten_sku_service import RakutenSKUService
 from app.services.supabase_service import SupabaseService
 from app.schemas.import_job import (
     FileUploadRequest,
@@ -156,9 +158,11 @@ async def preview_parse(
         # Extract keywords from product name for each row
         # 機種検出とサイズ抽出を実行（デザインマスター連携も含む）
         device_detector = DeviceDetectionService(db)
+        device_master_service = DeviceMasterService(db)
         product_type_learning_service = ProductTypeLearningService(db)
         device_learning_service = DeviceLearningService(db)
         size_learning_service = SizeLearningService(db)
+        rakuten_sku_service = RakutenSKUService()
         supabase_service = SupabaseService()
 
         for row in preview_data:
@@ -337,6 +341,29 @@ async def preview_parse(
                             row=row  # 選択肢列からの抽出も可能にする
                         )
                         logger.info(f"📏 商品属性からサイズ抽出: {product_name[:30]}... → サイズ={size}, 方法={size_method}")
+
+                    # 3. 楽天SKU管理システムDB（SKU番号から）
+                    if not size and product_code and product_code.strip():
+                        if rakuten_sku_service.is_available():
+                            size = rakuten_sku_service.get_size_by_sku(product_code.strip())
+                            if size:
+                                size_method = 'rakuten_sku_by_sku'
+                                logger.info(f"📏 楽天SKU管理システム（SKU）からサイズ取得: {product_code.strip()} → {size}")
+
+                    # 4. 楽天SKU管理システムDB（機種名から）
+                    if not size and device:
+                        if rakuten_sku_service.is_available():
+                            size = rakuten_sku_service.get_size_by_device(brand=brand, device_name=device)
+                            if size:
+                                size_method = 'rakuten_sku_by_device'
+                                logger.info(f"📏 楽天SKU管理システム（機種名）からサイズ取得: {brand} {device} → {size}")
+
+                    # 5. ローカルDB（device_attributes）から機種名でサイズ取得
+                    if not size and device:
+                        size = device_master_service.get_device_size(brand=brand, device_name=device)
+                        if size:
+                            size_method = 'local_device_master'
+                            logger.info(f"📏 ローカルDB（device_attributes）からサイズ取得: {brand} {device} → {size}")
 
                     row['detected_size'] = size if size else '-'
                     row['size_detection_method'] = size_method if size else 'not_found'
